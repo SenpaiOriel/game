@@ -37,7 +37,11 @@ export default function App() {
   const [enteredName, setEnteredName] = useState(false);
   const [score, setScore] = useState(0);
   const [running, setRunning] = useState(false);
-  const [leaderboard, setLeaderboard] = useState([]);
+  const [leaderboard, setLeaderboard] = useState({
+    easy: [],
+    medium: [],
+    hard: []
+  });
   const [gameEngine, setGameEngine] = useState(null);
   const [isDay, setIsDay] = useState(true);
   const [showPlayButton, setShowPlayButton] = useState(true);
@@ -49,6 +53,7 @@ export default function App() {
   const [showGameOverModal, setShowGameOverModal] = useState(false);
   const [difficulty, setDifficulty] = useState('medium');
   const [showDifficulty, setShowDifficulty] = useState(false);
+  const [showNameAlert, setShowNameAlert] = useState(false);
 
   useEffect(() => {
     if (running) {
@@ -142,25 +147,32 @@ export default function App() {
     const newEntry = { name: playerName, score, date: new Date().toLocaleDateString() };
     
     setLeaderboard(prev => {
+      const updatedLeaderboard = { ...prev };
+      const currentDifficultyLeaderboard = [...prev[difficulty]];
+      
       // Check if player already exists
-      const existingPlayerIndex = prev.findIndex(entry => entry.name === playerName);
+      const existingPlayerIndex = currentDifficultyLeaderboard.findIndex(entry => entry.name === playerName);
       
       if (existingPlayerIndex !== -1) {
         // Update the score if it's higher
-        if (score > prev[existingPlayerIndex].score) {
-          const updatedLeaderboard = [...prev];
-          updatedLeaderboard[existingPlayerIndex] = {
-            ...updatedLeaderboard[existingPlayerIndex],
+        if (score > currentDifficultyLeaderboard[existingPlayerIndex].score) {
+          currentDifficultyLeaderboard[existingPlayerIndex] = {
+            ...currentDifficultyLeaderboard[existingPlayerIndex],
             score: score,
             date: new Date().toLocaleDateString()
           };
-          return updatedLeaderboard.sort((a, b) => b.score - a.score);
         }
-        return prev;
       } else {
         // Add new player if they don't exist
-        return [...prev, newEntry].sort((a, b) => b.score - a.score);
+        currentDifficultyLeaderboard.push(newEntry);
       }
+      
+      // Sort and limit to top 10
+      updatedLeaderboard[difficulty] = currentDifficultyLeaderboard
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10);
+      
+      return updatedLeaderboard;
     });
     
     setShowGameOverModal(true);
@@ -205,13 +217,34 @@ export default function App() {
                 setEnteredName(true);
                 setShowDifficulty(true);
               } else {
-                Alert.alert("Please enter your name");
+                setShowNameAlert(true);
               }
             }}
           >
             <Text style={styles.startButtonText}>Start Game</Text>
           </TouchableOpacity>
         </View>
+
+        <Modal
+          visible={showNameAlert}
+          transparent={true}
+          animationType="fade"
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.alertModal, isDay ? styles.dayModal : styles.nightModal]}>
+              <Text style={[styles.alertTitle, isDay ? styles.dayText : styles.nightText]}>Missing Name</Text>
+              <Text style={[styles.alertMessage, isDay ? styles.dayText : styles.nightText]}>
+                Please enter your name to continue
+              </Text>
+              <TouchableOpacity 
+                style={[styles.alertButton, isDay ? styles.dayButton : styles.nightButton]}
+                onPress={() => setShowNameAlert(false)}
+              >
+                <Text style={styles.alertButtonText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     );
   }
@@ -333,9 +366,11 @@ export default function App() {
       </Modal>
 
       <View style={[styles.leaderboard, isDay ? styles.dayLeaderboard : styles.nightLeaderboard]}>
-        <Text style={[styles.leaderboardTitle, isDay ? styles.dayText : styles.nightText]}>Leaderboard</Text>
+        <Text style={[styles.leaderboardTitle, isDay ? styles.dayText : styles.nightText]}>
+          Leaderboard - {difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}
+        </Text>
         <FlatList
-          data={leaderboard}
+          data={leaderboard[difficulty]}
           keyExtractor={(item, index) => `${item.name}-${item.date}-${index}`}
           renderItem={({ item, index }) => (
             <View style={styles.leaderboardItemContainer}>
@@ -359,7 +394,8 @@ const styles = StyleSheet.create({
     paddingTop: 50,
   },
   dayTheme: {
-    backgroundColor: '#87CEEB',
+    backgroundColor: '#f8f9fa',
+    backgroundImage: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
   },
   nightTheme: {
     backgroundColor: '#0f172a',
@@ -370,18 +406,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     marginBottom: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     paddingVertical: 15,
     borderRadius: 15,
     marginHorizontal: 10,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.05)',
   },
   header: {
     fontSize: 22,
@@ -391,7 +429,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   dayText: {
-    color: '#1e293b',
+    color: '#2d3436',
   },
   nightText: {
     color: '#f1f5f9',
@@ -401,11 +439,12 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     margin: 15,
     overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
   },
   dayGameArea: {
-    backgroundColor: '#e0f2fe',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
   },
   nightGameArea: {
     backgroundColor: '#1e293b',
@@ -419,14 +458,14 @@ const styles = StyleSheet.create({
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   dayBall: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#74b9ff',
   },
   nightBall: {
     backgroundColor: '#facc15',
@@ -438,7 +477,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   dayObstacle: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#a4b0be',
   },
   nightObstacle: {
     backgroundColor: '#64748b',
@@ -473,18 +512,20 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 15,
     margin: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.05)',
   },
   dayLeaderboard: {
-    backgroundColor: '#e0f2fe',
+    backgroundColor: '#ffffff',
   },
   nightLeaderboard: {
     backgroundColor: '#1e293b',
@@ -532,17 +573,19 @@ const styles = StyleSheet.create({
   inputContainer: {
     width: '90%',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     padding: 30,
     borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.05)',
   },
   input: {
     padding: 15,
@@ -749,5 +792,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 5,
     opacity: 0.8,
+  },
+  alertModal: {
+    width: '80%',
+    padding: 25,
+    borderRadius: 15,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  alertTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  alertMessage: {
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+    opacity: 0.8,
+  },
+  alertButton: {
+    padding: 12,
+    borderRadius: 10,
+    width: '50%',
+    alignItems: 'center',
+  },
+  alertButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
