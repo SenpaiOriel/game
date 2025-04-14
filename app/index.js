@@ -16,19 +16,19 @@ const DIFFICULTY_LEVELS = {
     gapSize: 250,
     obstacleSpeed: 2,
     obstacleSpacing: 120,
-    gravity: 0.4
+    gravity: 0.5
   },
   medium: {
     gapSize: 200,
-    obstacleSpeed: 3,
+    obstacleSpeed: 4,
     obstacleSpacing: 100,
-    gravity: 0.5
+    gravity: 0.6
   },
   hard: {
     gapSize: 150,
-    obstacleSpeed: 4,
+    obstacleSpeed: 5,
     obstacleSpacing: 80,
-    gravity: 0.6
+    gravity: 0.7
   }
 };
 
@@ -54,6 +54,23 @@ export default function App() {
   const [difficulty, setDifficulty] = useState('medium');
   const [showDifficulty, setShowDifficulty] = useState(false);
   const [showNameAlert, setShowNameAlert] = useState(false);
+  const [clouds, setClouds] = useState([
+    { x: 50, y: 100, size: 40 },
+    { x: 200, y: 150, size: 60 },
+    { x: 350, y: 80, size: 50 },
+  ]);
+  const [stars, setStars] = useState([
+    { x: 30, y: 50, size: 2 },
+    { x: 100, y: 80, size: 3 },
+    { x: 250, y: 40, size: 2 },
+    { x: 300, y: 120, size: 4 },
+    { x: 150, y: 60, size: 3 },
+  ]);
+  const [birds, setBirds] = useState([
+    { x: 100, y: 50, size: 20 },
+    { x: 250, y: 80, size: 15 },
+    { x: 400, y: 60, size: 25 },
+  ]);
 
   useEffect(() => {
     if (running) {
@@ -303,7 +320,7 @@ export default function App() {
         <Ionicons 
           name={isDay ? "sunny" : "moon"} 
           size={24} 
-          color={isDay ? "#f59e0b" : "#f1f5f9"} 
+          color={isDay ? "#3498db" : "#f1f5f9"} 
         />
       </View>
 
@@ -321,15 +338,110 @@ export default function App() {
         style={[styles.gameArea, isDay ? styles.dayGameArea : styles.nightGameArea]}
         activeOpacity={1}
       >
+        {/* Day Elements */}
+        {isDay && (
+          <>
+            {/* Sun */}
+            <View style={styles.sun} />
+            
+            {/* Clouds */}
+            {clouds.map((cloud, index) => (
+              <View 
+                key={`cloud-${index}`}
+                style={[
+                  styles.cloud,
+                  {
+                    left: cloud.x,
+                    top: cloud.y,
+                    width: cloud.size,
+                    height: cloud.size * 0.6,
+                  }
+                ]}
+              />
+            ))}
+            
+            {/* Birds */}
+            {birds.map((bird, index) => (
+              <View 
+                key={`bird-${index}`}
+                style={[
+                  styles.bird,
+                  {
+                    left: bird.x,
+                    top: bird.y,
+                    width: bird.size,
+                    height: bird.size * 0.5,
+                  }
+                ]}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Night Elements */}
+        {!isDay && (
+          <>
+            {/* Moon */}
+            <View style={styles.moon} />
+            
+            {/* Stars */}
+            {stars.map((star, index) => (
+              <View 
+                key={`star-${index}`}
+                style={[
+                  styles.star,
+                  {
+                    left: star.x,
+                    top: star.y,
+                    width: star.size,
+                    height: star.size,
+                  }
+                ]}
+              />
+            ))}
+            
+            {/* Night Clouds */}
+            {clouds.map((cloud, index) => (
+              <View 
+                key={`night-cloud-${index}`}
+                style={[
+                  styles.nightCloud,
+                  {
+                    left: cloud.x,
+                    top: cloud.y,
+                    width: cloud.size,
+                    height: cloud.size * 0.6,
+                  }
+                ]}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Ground */}
+        <View style={[styles.ground, isDay ? styles.dayGround : styles.nightGround]} />
+
         <View style={[styles.ball, { top: ballY.current }, isDay ? styles.dayBall : styles.nightBall]} />
         {obstacles.current.map((obs, index) => (
           <View key={index}>
-            <View style={[styles.obstacle, { left: obs.x, height: obs.topHeight }, isDay ? styles.dayObstacle : styles.nightObstacle]} />
-            <View style={[styles.obstacle, {
-              left: obs.x,
-              top: obs.topHeight + GAP_SIZE,
-              height: 600 - obs.topHeight - GAP_SIZE,
-            }, isDay ? styles.dayObstacle : styles.nightObstacle]} />
+            <View 
+              style={[
+                styles.obstacle, 
+                { left: obs.x, height: obs.topHeight }, 
+                isDay ? styles.dayObstacle : styles.nightObstacle
+              ]} 
+            />
+            <View 
+              style={[
+                styles.obstacle, 
+                {
+                  left: obs.x,
+                  top: obs.topHeight + GAP_SIZE,
+                  height: 600 - obs.topHeight - GAP_SIZE,
+                }, 
+                isDay ? styles.dayObstacle : styles.nightObstacle
+              ]} 
+            />
           </View>
         ))}
       </TouchableOpacity>
@@ -391,11 +503,12 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 50,
+    paddingTop: 30,
+    paddingHorizontal: 10,
   },
   dayTheme: {
-    backgroundColor: '#f8f9fa',
-    backgroundImage: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
+    backgroundColor: '#f0f4f8',
+    backgroundImage: 'linear-gradient(135deg, #f0f4f8 0%, #e6f0f7 50%, #d9e9f2 100%)',
   },
   nightTheme: {
     backgroundColor: '#0f172a',
@@ -404,22 +517,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    paddingVertical: 15,
-    borderRadius: 15,
-    marginHorizontal: 10,
+    paddingHorizontal: 15,
+    marginBottom: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginHorizontal: 8,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
       height: 1,
     },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.05)',
+    borderColor: 'rgba(0, 0, 0, 0.03)',
   },
   header: {
     fontSize: 22,
@@ -429,22 +542,22 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   dayText: {
-    color: '#2d3436',
+    color: '#2c3e50',
   },
   nightText: {
     color: '#f1f5f9',
   },
   gameArea: {
     flex: 1,
-    borderRadius: 20,
-    margin: 15,
+    borderRadius: 15,
+    margin: 10,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.1)',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderColor: 'rgba(0, 0, 0, 0.05)',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
   },
   dayGameArea: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
   },
   nightGameArea: {
     backgroundColor: '#1e293b',
@@ -460,12 +573,12 @@ const styles = StyleSheet.create({
       width: 0,
       height: 1,
     },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
   },
   dayBall: {
-    backgroundColor: '#74b9ff',
+    backgroundColor: '#3498db',
   },
   nightBall: {
     backgroundColor: '#facc15',
@@ -474,10 +587,20 @@ const styles = StyleSheet.create({
     width: OBSTACLE_WIDTH,
     position: 'absolute',
     top: 0,
-    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   dayObstacle: {
-    backgroundColor: '#a4b0be',
+    backgroundColor: '#95a5a6',
+    backgroundImage: 'linear-gradient(90deg, #bdc3c7 0%, #95a5a6 50%, #7f8c8d 100%)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.05)',
   },
   nightObstacle: {
     backgroundColor: '#64748b',
@@ -509,20 +632,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   leaderboard: {
-    padding: 15,
-    borderRadius: 15,
-    margin: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 12,
+    borderRadius: 12,
+    margin: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
       height: 1,
     },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.05)',
+    borderColor: 'rgba(0, 0, 0, 0.03)',
   },
   dayLeaderboard: {
     backgroundColor: '#ffffff',
@@ -571,35 +694,39 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   inputContainer: {
-    width: '90%',
+    width: '85%',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    padding: 30,
-    borderRadius: 20,
+    backgroundColor: 'rgba(236, 240, 241, 0.8)',
+    padding: 25,
+    borderRadius: 15,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
       height: 1,
     },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.05)',
+    borderColor: 'rgba(0, 0, 0, 0.03)',
   },
   input: {
     padding: 15,
-    borderRadius: 15,
+    borderRadius: 12,
     marginBottom: 20,
     width: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.1)',
+    color: '#2c3e50',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   playButton: {
     position: 'absolute',
@@ -720,17 +847,18 @@ const styles = StyleSheet.create({
   startButton: {
     width: '80%',
     padding: 20,
-    borderRadius: 15,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: 20,
+    backgroundColor: 'rgba(52, 152, 219, 0.8)',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   startButtonText: {
     color: 'white',
@@ -741,19 +869,21 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   difficultyContainer: {
-    width: '90%',
+    width: '85%',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    padding: 30,
-    borderRadius: 20,
+    backgroundColor: 'rgba(236, 240, 241, 0.8)',
+    padding: 25,
+    borderRadius: 15,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.03)',
   },
   difficultyTitle: {
     fontSize: 32,
@@ -767,17 +897,18 @@ const styles = StyleSheet.create({
   difficultyButton: {
     width: '80%',
     padding: 20,
-    borderRadius: 15,
+    borderRadius: 12,
     alignItems: 'center',
     marginBottom: 20,
+    backgroundColor: 'rgba(52, 152, 219, 0.8)',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 1,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   difficultyButtonText: {
     color: 'white',
@@ -794,21 +925,21 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   alertModal: {
-    width: '80%',
-    padding: 25,
-    borderRadius: 15,
+    width: '75%',
+    padding: 20,
+    borderRadius: 12,
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
       height: 1,
     },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.05)',
+    borderColor: 'rgba(0, 0, 0, 0.03)',
   },
   alertTitle: {
     fontSize: 24,
@@ -832,5 +963,91 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  sun: {
+    position: 'absolute',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#f39c12',
+    top: 50,
+    right: 50,
+    shadowColor: '#f39c12',
+    shadowOffset: {
+      width: 0,
+      height: 0,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  moon: {
+    position: 'absolute',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#bdc3c7',
+    top: 50,
+    right: 50,
+    shadowColor: '#bdc3c7',
+    shadowOffset: {
+      width: 0,
+      height: 0,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  star: {
+    position: 'absolute',
+    backgroundColor: '#95a5a6',
+    borderRadius: 1,
+    shadowColor: '#95a5a6',
+    shadowOffset: {
+      width: 0,
+      height: 0,
+    },
+    shadowOpacity: 0.6,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  cloud: {
+    position: 'absolute',
+    backgroundColor: 'rgba(189, 195, 199, 0.7)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  nightCloud: {
+    position: 'absolute',
+    backgroundColor: 'rgba(149, 165, 166, 0.2)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  bird: {
+    position: 'absolute',
+    width: 20,
+    height: 10,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+    backgroundColor: 'rgba(52, 73, 94, 0.7)',
+    transform: [{ rotate: '45deg' }],
+  },
+  ground: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 40,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  dayGround: {
+    backgroundColor: 'rgba(189, 195, 199, 0.3)',
+    backgroundImage: 'linear-gradient(180deg, rgba(189, 195, 199, 0.3) 0%, rgba(149, 165, 166, 0.4) 100%)',
+  },
+  nightGround: {
+    backgroundColor: 'rgba(100, 116, 139, 0.3)',
   },
 });
