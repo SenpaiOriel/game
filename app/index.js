@@ -1,452 +1,1142 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, TouchableOpacity, Alert, FlatList, KeyboardAvoidingView, Platform, Modal } from 'react-native';
-import Matter from 'matter-js';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Modal, ScrollView, Animated, Image, TextInput } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
 
-const BALL_SIZE = 40;
-const OBSTACLE_WIDTH = 60;
-const GAP_SIZE = 200;
-const GRAVITY = 0.5;
-const MIN_GAP_HEIGHT = 100;
-const OBSTACLE_SPEED = 3;
-
-const DIFFICULTY_LEVELS = {
-  easy: {
-    gapSize: 250,
-    obstacleSpeed: 2,
-    obstacleSpacing: 120,
-    gravity: 0.5
+const BOARD_SIZE = 8;
+const PIECES = {
+  'white': {
+    'pawn': '♟',
+    'rook': '♜',
+    'knight': '♞',
+    'bishop': '♝',
+    'queen': '♛',
+    'king': '♚'
   },
-  medium: {
-    gapSize: 200,
-    obstacleSpeed: 4,
-    obstacleSpacing: 100,
-    gravity: 0.6
-  },
-  hard: {
-    gapSize: 150,
-    obstacleSpeed: 5,
-    obstacleSpacing: 80,
-    gravity: 0.7
+  'black': {
+    'pawn': '♙',
+    'rook': '♖',
+    'knight': '♘',
+    'bishop': '♗',
+    'queen': '♕',
+    'king': '♔'
   }
 };
 
-export default function App() {
-  const [playerName, setPlayerName] = useState('');
-  const [enteredName, setEnteredName] = useState(false);
-  const [score, setScore] = useState(0);
-  const [running, setRunning] = useState(false);
-  const [leaderboard, setLeaderboard] = useState({
-    easy: [],
-    medium: [],
-    hard: []
-  });
-  const [gameEngine, setGameEngine] = useState(null);
-  const [isDay, setIsDay] = useState(true);
-  const [showPlayButton, setShowPlayButton] = useState(true);
-  const [lastScore, setLastScore] = useState(0);
-  const ballY = useRef(300);
-  const velocity = useRef(0);
-  const obstacles = useRef([]);
-  const [tick, setTick] = useState(0);
+const initialBoard = [
+  ['black_rook', 'black_knight', 'black_bishop', 'black_queen', 'black_king', 'black_bishop', 'black_knight', 'black_rook'],
+  ['black_pawn', 'black_pawn', 'black_pawn', 'black_pawn', 'black_pawn', 'black_pawn', 'black_pawn', 'black_pawn'],
+  [null, null, null, null, null, null, null, null],
+  [null, null, null, null, null, null, null, null],
+  [null, null, null, null, null, null, null, null],
+  [null, null, null, null, null, null, null, null],
+  ['white_pawn', 'white_pawn', 'white_pawn', 'white_pawn', 'white_pawn', 'white_pawn', 'white_pawn', 'white_pawn'],
+  ['white_rook', 'white_knight', 'white_bishop', 'white_queen', 'white_king', 'white_bishop', 'white_knight', 'white_rook']
+];
+
+const INITIAL_TIME = 600; // 10 minutes in seconds
+
+const TIME_OPTIONS = [3, 5, 7, 10]; // Time options in minutes
+
+const formatTime = (seconds) => {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
+
+export default function ChessGame() {
+  const router = useRouter();
+  const [board, setBoard] = useState(initialBoard);
+  const [selectedPiece, setSelectedPiece] = useState(null);
+  const [currentPlayer, setCurrentPlayer] = useState('white');
+  const [validMoves, setValidMoves] = useState([]);
+  const [gameOver, setGameOver] = useState(false);
+  const [winner, setWinner] = useState(null);
   const [showGameOverModal, setShowGameOverModal] = useState(false);
-  const [difficulty, setDifficulty] = useState('medium');
-  const [showDifficulty, setShowDifficulty] = useState(false);
-  const [showNameAlert, setShowNameAlert] = useState(false);
-  const [clouds, setClouds] = useState([
-    { x: 50, y: 100, size: 40 },
-    { x: 200, y: 150, size: 60 },
-    { x: 350, y: 80, size: 50 },
-  ]);
-  const [stars, setStars] = useState([
-    { x: 30, y: 50, size: 2 },
-    { x: 100, y: 80, size: 3 },
-    { x: 250, y: 40, size: 2 },
-    { x: 300, y: 120, size: 4 },
-    { x: 150, y: 60, size: 3 },
-  ]);
-  const [birds, setBirds] = useState([
-    { x: 100, y: 50, size: 20 },
-    { x: 250, y: 80, size: 15 },
-    { x: 400, y: 60, size: 25 },
-  ]);
+  const [capturedPieces, setCapturedPieces] = useState({ white: [], black: [] });
+  const [moveHistory, setMoveHistory] = useState([]);
+  const [enPassantTarget, setEnPassantTarget] = useState(null);
+  const [castlingRights, setCastlingRights] = useState({
+    white: { kingSide: true, queenSide: true },
+    black: { kingSide: true, queenSide: true }
+  });
+  const [showPromotionModal, setShowPromotionModal] = useState(false);
+  const [promotionMove, setPromotionMove] = useState(null);
+  const [whiteTime, setWhiteTime] = useState(INITIAL_TIME);
+  const [blackTime, setBlackTime] = useState(INITIAL_TIME);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [showTimeSelectionModal, setShowTimeSelectionModal] = useState(true);
+  const [selectedTime, setSelectedTime] = useState(5); // Default 5 minutes
+  const [useTimer, setUseTimer] = useState(true); // New state for timer preference
+  const timerRef = useRef(null);
+  const [lastMove, setLastMove] = useState(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const [isLoading, setIsLoading] = useState(true);
+  const [showStartScreen, setShowStartScreen] = useState(true);
+  const [showPauseMenu, setShowPauseMenu] = useState(false);
+  const [playerNames, setPlayerNames] = useState({ white: '', black: '' });
+  const [selectedColor, setSelectedColor] = useState(null);
+  const [gameStatus, setGameStatus] = useState('');
+  const [isKingInCheck, setIsKingInCheck] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const [winTally, setWinTally] = useState({ white: 0, black: 0 });
 
+  // Save game state to AsyncStorage
   useEffect(() => {
-    if (running) {
-      const interval = setInterval(() => {
-        setTick(prev => prev + 1);
-        // Toggle day/night every 100 ticks
-        if (tick % 100 === 0) {
-          setIsDay(prev => !prev);
+    const saveGameState = async () => {
+      const gameState = {
+        board,
+        currentPlayer,
+        capturedPieces,
+        moveHistory,
+        enPassantTarget,
+        castlingRights
+      };
+      try {
+        await AsyncStorage.setItem('chessGameState', JSON.stringify(gameState));
+      } catch (error) {
+        console.error('Error saving game state:', error);
+      }
+    };
+    saveGameState();
+  }, [board, currentPlayer, capturedPieces, moveHistory, enPassantTarget, castlingRights]);
+
+  // Load game state from AsyncStorage
+  useEffect(() => {
+    const loadGameState = async () => {
+      try {
+        const savedState = await AsyncStorage.getItem('chessGameState');
+        if (savedState) {
+          const { board: savedBoard, currentPlayer: savedPlayer, 
+                  capturedPieces: savedCaptured, moveHistory: savedMoves,
+                  enPassantTarget: savedEnPassantTarget, castlingRights: savedCastlingRights } = JSON.parse(savedState);
+          setBoard(savedBoard);
+          setCurrentPlayer(savedPlayer);
+          setCapturedPieces(savedCaptured);
+          setMoveHistory(savedMoves);
+          setEnPassantTarget(savedEnPassantTarget);
+          setCastlingRights(savedCastlingRights);
         }
-      }, 20);
-      return () => clearInterval(interval);
+        // Load win tally
+        await loadWinTally();
+      } catch (error) {
+        console.error('Error loading game state:', error);
+      }
+    };
+    loadGameState();
+  }, []);
+
+  // Update timer effect to only run if timer is enabled
+  useEffect(() => {
+    if (isTimerRunning && useTimer) {
+      timerRef.current = setInterval(() => {
+        if (currentPlayer === 'white') {
+          setWhiteTime(prev => {
+            if (prev <= 0) {
+              handleTimeUp('white');
+              return 0;
+            }
+            return prev - 1;
+          });
+        } else {
+          setBlackTime(prev => {
+            if (prev <= 0) {
+              handleTimeUp('black');
+              return 0;
+            }
+            return prev - 1;
+          });
+        }
+      }, 1000);
     }
-  }, [running, tick]);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, [isTimerRunning, currentPlayer, useTimer]);
 
   useEffect(() => {
-    if (running) {
-      velocity.current += DIFFICULTY_LEVELS[difficulty].gravity;
-      ballY.current += velocity.current;
+    // Simulate loading time
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 2000);
 
-      // Check collision
-      for (let i = 0; i < obstacles.current.length; i++) {
-        const obs = obstacles.current[i];
-        if (
-          obs.x < 100 + BALL_SIZE / 2 &&
-          obs.x + OBSTACLE_WIDTH > 100 - BALL_SIZE / 2
-        ) {
-          if (ballY.current < obs.topHeight || ballY.current > obs.topHeight + GAP_SIZE) {
-            endGame();
-            return;
-          }
-          // Check if we've passed the obstacle
-          if (!obs.passed && obs.x + OBSTACLE_WIDTH < 100 - BALL_SIZE / 2) {
-            obs.passed = true;
-            setScore(prev => prev + 1);
-          }
-        }
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          friction: 8,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [isLoading]);
+
+  // Add this effect for the pulsing animation
+  useEffect(() => {
+    if (isKingInCheck) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [isKingInCheck]);
+
+  const isValidMove = (fromRow, fromCol, toRow, toCol) => {
+    const piece = board[fromRow][fromCol];
+    if (!piece) return false;
+
+    const isWhitePiece = piece.startsWith('white_');
+    if ((isWhitePiece && currentPlayer === 'black') || (!isWhitePiece && currentPlayer === 'white')) {
+      return false;
+    }
+
+    const destPiece = board[toRow][toCol];
+    if (destPiece) {
+      const isDestWhitePiece = destPiece.startsWith('white_');
+      if ((isWhitePiece && isDestWhitePiece) || (!isWhitePiece && !isDestWhitePiece)) {
+        return false;
       }
+    }
 
-      // Hit ground or sky
-      if (ballY.current > 600 || ballY.current < 0) {
-        endGame();
-        return;
-      }
+    // Create a temporary board to test the move
+    const tempBoard = board.map(row => [...row]);
+    tempBoard[toRow][toCol] = piece;
+    tempBoard[fromRow][fromCol] = null;
 
-      // Move obstacles and check for passing
-      obstacles.current = obstacles.current.map(obs => {
-        const newX = obs.x - DIFFICULTY_LEVELS[difficulty].obstacleSpeed;
-        // Check if we've passed the obstacle
-        if (!obs.passed && newX + OBSTACLE_WIDTH < 100 - BALL_SIZE / 2) {
-          obs.passed = true;
-          setScore(prev => prev + 1);
-        }
-        return { ...obs, x: newX };
-      });
+    // Check if the move would leave the king in check
+    if (wouldBeInCheck(tempBoard, isWhitePiece)) {
+      return false;
+    }
 
-      // Add new obstacle with proper spacing based on difficulty
-      if (tick % DIFFICULTY_LEVELS[difficulty].obstacleSpacing === 0) {
-        const maxTopHeight = 600 - DIFFICULTY_LEVELS[difficulty].gapSize - MIN_GAP_HEIGHT;
-        const topHeight = Math.floor(Math.random() * (maxTopHeight - MIN_GAP_HEIGHT)) + MIN_GAP_HEIGHT;
+    const pieceType = piece.split('_')[1];
+
+    switch (pieceType) {
+      case 'pawn':
+        const direction = isWhitePiece ? -1 : 1;
+        const startRow = isWhitePiece ? 6 : 1;
         
-        obstacles.current.push({ 
-          x: 400, 
-          topHeight,
-          passed: false 
-        });
-      }
-
-      // Remove off-screen obstacles
-      obstacles.current = obstacles.current.filter(obs => obs.x + OBSTACLE_WIDTH > 0);
-    }
-  }, [tick, difficulty]);
-
-  const handleJump = () => {
-    if (!running) return;
-    velocity.current = -8;
-  };
-
-  const startGame = () => {
-    ballY.current = 300;
-    velocity.current = 0;
-    obstacles.current = [];
-    setScore(0);
-    setRunning(true);
-    setShowPlayButton(false);
-    setShowGameOverModal(false);
-  };
-
-  const endGame = () => {
-    setRunning(false);
-    setLastScore(score);
-    const newEntry = { name: playerName, score, date: new Date().toLocaleDateString() };
-    
-    setLeaderboard(prev => {
-      const updatedLeaderboard = { ...prev };
-      const currentDifficultyLeaderboard = [...prev[difficulty]];
-      
-      // Check if player already exists
-      const existingPlayerIndex = currentDifficultyLeaderboard.findIndex(entry => entry.name === playerName);
-      
-      if (existingPlayerIndex !== -1) {
-        // Update the score if it's higher
-        if (score > currentDifficultyLeaderboard[existingPlayerIndex].score) {
-          currentDifficultyLeaderboard[existingPlayerIndex] = {
-            ...currentDifficultyLeaderboard[existingPlayerIndex],
-            score: score,
-            date: new Date().toLocaleDateString()
-          };
+        // Forward move (one square)
+        if (fromCol === toCol && toRow === fromRow + direction && !board[toRow][toCol]) {
+          return true;
         }
-      } else {
-        // Add new player if they don't exist
-        currentDifficultyLeaderboard.push(newEntry);
-      }
-      
-      // Sort and limit to top 10
-      updatedLeaderboard[difficulty] = currentDifficultyLeaderboard
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10);
-      
-      return updatedLeaderboard;
-    });
+        
+        // Initial two-square move
+        if (fromRow === startRow && fromCol === toCol && 
+            toRow === fromRow + 2 * direction && 
+            !board[fromRow + direction][fromCol] && 
+            !board[toRow][toCol]) {
+          return true;
+        }
+        
+        // Normal capture
+        if (Math.abs(fromCol - toCol) === 1 && toRow === fromRow + direction && board[toRow][toCol]) {
+          return true;
+        }
+
+        // En passant capture
+        if (enPassantTarget && 
+            Math.abs(fromCol - toCol) === 1 && 
+            toRow === fromRow + direction && 
+            toRow === enPassantTarget.row && 
+            toCol === enPassantTarget.col) {
+          return true;
+        }
+        return false;
+
+      case 'rook':
+        if (fromRow !== toRow && fromCol !== toCol) return false;
+        return !isPathBlocked(tempBoard, fromRow, fromCol, toRow, toCol);
+
+      case 'knight':
+        return (Math.abs(fromRow - toRow) === 2 && Math.abs(fromCol - toCol) === 1) ||
+               (Math.abs(fromRow - toRow) === 1 && Math.abs(fromCol - toCol) === 2);
+
+      case 'bishop':
+        if (Math.abs(fromRow - toRow) !== Math.abs(fromCol - toCol)) return false;
+        return !isPathBlocked(tempBoard, fromRow, fromCol, toRow, toCol);
+
+      case 'queen':
+        if (fromRow !== toRow && fromCol !== toCol && 
+            Math.abs(fromRow - toRow) !== Math.abs(fromCol - toCol)) return false;
+        return !isPathBlocked(tempBoard, fromRow, fromCol, toRow, toCol);
+
+      case 'king':
+        // Normal king move
+        if (Math.abs(fromRow - toRow) <= 1 && Math.abs(fromCol - toCol) <= 1) {
+          return true;
+        }
+        
+        // Castling
+        if (fromRow === toRow && Math.abs(fromCol - toCol) === 2) {
+          const side = isWhitePiece ? 'white' : 'black';
+          const isKingside = toCol > fromCol;
+          
+          // Check if castling is allowed
+          if (!castlingRights[side][isKingside ? 'kingSide' : 'queenSide']) {
+            return false;
+          }
+
+          // Check if king is in check or would move through check
+          if (isInCheck(isWhitePiece) || 
+              isSquareAttacked(isWhitePiece, fromRow, fromCol + (isKingside ? 1 : -1))) {
+            return false;
+          }
+
+          const rookCol = isKingside ? 7 : 0;
+          const rook = board[fromRow][rookCol];
+          
+          if (rook !== `${side}_rook`) return false;
+          
+          // Check if path is clear
+          const direction = isKingside ? 1 : -1;
+          for (let col = fromCol + direction; col !== rookCol; col += direction) {
+            if (board[fromRow][col] || isSquareAttacked(isWhitePiece, fromRow, col)) {
+              return false;
+            }
+          }
+          
+          return true;
+        }
+        return false;
+
+      default:
+        return false;
+    }
+  };
+
+  const wouldBeInCheck = (boardState, isWhite) => {
+    // Find the king's position
+    const kingType = isWhite ? 'white_king' : 'black_king';
+    let kingRow = -1;
+    let kingCol = -1;
     
+    for (let row = 0; row < BOARD_SIZE; row++) {
+      for (let col = 0; col < BOARD_SIZE; col++) {
+        if (boardState[row][col] === kingType) {
+          kingRow = row;
+          kingCol = col;
+          break;
+        }
+      }
+      if (kingRow !== -1) break;
+    }
+
+    // Check if any opponent piece can attack the king
+    for (let row = 0; row < BOARD_SIZE; row++) {
+      for (let col = 0; col < BOARD_SIZE; col++) {
+        const piece = boardState[row][col];
+        if (piece && piece.startsWith(isWhite ? 'black_' : 'white_')) {
+          if (canAttackSquare(boardState, row, col, kingRow, kingCol)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  const canAttackSquare = (boardState, fromRow, fromCol, toRow, toCol) => {
+    const piece = boardState[fromRow][fromCol];
+    if (!piece) return false;
+
+    const pieceType = piece.split('_')[1];
+    const isWhitePiece = piece.startsWith('white_');
+
+    switch (pieceType) {
+      case 'pawn':
+        const direction = isWhitePiece ? -1 : 1;
+        // Pawns can only capture diagonally
+        return Math.abs(fromCol - toCol) === 1 && toRow === fromRow + direction;
+
+      case 'rook':
+        if (fromRow !== toRow && fromCol !== toCol) return false;
+        return !isPathBlocked(boardState, fromRow, fromCol, toRow, toCol);
+
+      case 'knight':
+        return (Math.abs(fromRow - toRow) === 2 && Math.abs(fromCol - toCol) === 1) ||
+               (Math.abs(fromRow - toRow) === 1 && Math.abs(fromCol - toCol) === 2);
+
+      case 'bishop':
+        if (Math.abs(fromRow - toRow) !== Math.abs(fromCol - toCol)) return false;
+        return !isPathBlocked(boardState, fromRow, fromCol, toRow, toCol);
+
+      case 'queen':
+        if (fromRow !== toRow && fromCol !== toCol && 
+            Math.abs(fromRow - toRow) !== Math.abs(fromCol - toCol)) return false;
+        return !isPathBlocked(boardState, fromRow, fromCol, toRow, toCol);
+
+      case 'king':
+        return Math.abs(fromRow - toRow) <= 1 && Math.abs(fromCol - toCol) <= 1;
+
+      default:
+        return false;
+    }
+  };
+
+  const isPathBlocked = (boardState, fromRow, fromCol, toRow, toCol) => {
+    const rowStep = fromRow === toRow ? 0 : (toRow - fromRow) / Math.abs(toRow - fromRow);
+    const colStep = fromCol === toCol ? 0 : (toCol - fromCol) / Math.abs(toCol - fromCol);
+    
+    let currentRow = fromRow + rowStep;
+    let currentCol = fromCol + colStep;
+    
+    while (currentRow !== toRow || currentCol !== toCol) {
+      if (boardState[currentRow][currentCol]) return true;
+      currentRow += rowStep;
+      currentCol += colStep;
+    }
+    return false;
+  };
+
+  const isInCheck = (isWhite) => {
+    // Find the king
+    const kingType = isWhite ? 'white_king' : 'black_king';
+    let kingRow = -1;
+    let kingCol = -1;
+    
+    for (let row = 0; row < BOARD_SIZE; row++) {
+      for (let col = 0; col < BOARD_SIZE; col++) {
+        if (board[row][col] === kingType) {
+          kingRow = row;
+          kingCol = col;
+          break;
+        }
+      }
+      if (kingRow !== -1) break;
+    }
+
+    // Check if any opponent piece can attack the king
+    for (let row = 0; row < BOARD_SIZE; row++) {
+      for (let col = 0; col < BOARD_SIZE; col++) {
+        const piece = board[row][col];
+        if (piece && piece.startsWith(isWhite ? 'black_' : 'white_')) {
+          if (isValidMove(row, col, kingRow, kingCol)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  const isSquareAttacked = (isWhite, row, col) => {
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const piece = board[r][c];
+        if (piece && piece.startsWith(isWhite ? 'black_' : 'white_')) {
+          if (isValidMove(r, c, row, col)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  const handlePromotion = (pieceType) => {
+    if (promotionMove) {
+      const { fromRow, fromCol, toRow, toCol, piece } = promotionMove;
+      const isWhitePiece = piece.startsWith('white_');
+      const newBoard = board.map(row => [...row]);
+      
+      newBoard[toRow][toCol] = `${isWhitePiece ? 'white' : 'black'}_${pieceType}`;
+      newBoard[fromRow][fromCol] = null;
+      
+      setBoard(newBoard);
+      setShowPromotionModal(false);
+      setPromotionMove(null);
+      
+      // Record the move
+      const move = {
+        piece: piece,
+        from: [fromRow, fromCol],
+        to: [toRow, toCol],
+        captured: null,
+        player: currentPlayer,
+        isPromotion: true,
+        promotedTo: pieceType
+      };
+      setMoveHistory(prev => [...prev, move]);
+      
+      setCurrentPlayer(currentPlayer === 'white' ? 'black' : 'white');
+    }
+  };
+
+  const animateMove = (fromRow, fromCol, toRow, toCol) => {
+    setLastMove({ from: [fromRow, fromCol], to: [toRow, toCol] });
+    fadeAnim.setValue(0);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleTimeUp = (player) => {
+    setGameOver(true);
+    const winningPlayer = player === 'white' ? 'black' : 'white';
+    setWinner(winningPlayer);
     setShowGameOverModal(true);
+    setIsTimerRunning(false);
+    
+    // Update win tally
+    const newTally = {
+      ...winTally,
+      [winningPlayer]: (winTally[winningPlayer] || 0) + 1
+    };
+    setWinTally(newTally);
+    saveWinTally(newTally);
+    
+    // Show enhanced time up alert
+    Alert.alert(
+      "Time's Up!",
+      `${playerNames[winningPlayer] || winningPlayer.toUpperCase()} wins on time!`,
+      [{ text: "OK" }]
+    );
   };
 
-  const goToHome = () => {
+  const handleCellPress = (row, col) => {
+    if (gameOver) return;
+
+    if (selectedPiece) {
+      const [fromRow, fromCol] = selectedPiece;
+      if (isValidMove(fromRow, fromCol, row, col)) {
+        const newBoard = board.map(row => [...row]);
+        const piece = board[fromRow][fromCol];
+        const isWhitePiece = piece.startsWith('white_');
+        const pieceType = piece.split('_')[1];
+        const capturedPiece = newBoard[row][col];
+
+        // Handle capture
+        if (capturedPiece) {
+          setCapturedPieces(prev => ({
+            ...prev,
+            [isWhitePiece ? 'white' : 'black']: [...prev[isWhitePiece ? 'white' : 'black'], capturedPiece]
+          }));
+        }
+
+        // Move the piece
+        newBoard[row][col] = piece;
+        newBoard[fromRow][fromCol] = null;
+
+        // Handle en passant capture
+        if (pieceType === 'pawn' && enPassantTarget && 
+            row === enPassantTarget.row && col === enPassantTarget.col) {
+          const capturedPawnRow = fromRow;
+          const capturedPawnCol = col;
+          const capturedPawn = newBoard[capturedPawnRow][capturedPawnCol];
+          newBoard[capturedPawnRow][capturedPawnCol] = null;
+          setCapturedPieces(prev => ({
+            ...prev,
+            [isWhitePiece ? 'white' : 'black']: [...prev[isWhitePiece ? 'white' : 'black'], capturedPawn]
+          }));
+        }
+
+        // Handle castling
+        if (pieceType === 'king' && Math.abs(fromCol - col) === 2) {
+          const isKingside = col > fromCol;
+          const rookCol = isKingside ? 7 : 0;
+          const newRookCol = isKingside ? col - 1 : col + 1;
+          newBoard[row][newRookCol] = `${isWhitePiece ? 'white' : 'black'}_rook`;
+          newBoard[fromRow][rookCol] = null;
+          
+          // Update castling rights
+          setCastlingRights(prev => ({
+            ...prev,
+            [isWhitePiece ? 'white' : 'black']: {
+              kingSide: false,
+              queenSide: false
+            }
+          }));
+        }
+
+        // Handle pawn promotion
+        if (pieceType === 'pawn' && (row === 0 || row === 7)) {
+          setPromotionMove({
+            fromRow,
+            fromCol,
+            toRow: row,
+            toCol: col,
+            piece
+          });
+          setShowPromotionModal(true);
+          setSelectedPiece(null);
+          setValidMoves([]);
+          return;
+        }
+
+        // Update en passant target
+        if (pieceType === 'pawn' && Math.abs(fromRow - row) === 2) {
+          setEnPassantTarget({
+            row: (fromRow + row) / 2,
+            col: col
+          });
+        } else {
+          setEnPassantTarget(null);
+        }
+
+        // Update castling rights for rook moves
+        if (pieceType === 'rook') {
+          const side = isWhitePiece ? 'white' : 'black';
+          const isKingside = fromCol === 7;
+          setCastlingRights(prev => ({
+            ...prev,
+            [side]: {
+              ...prev[side],
+              [isKingside ? 'kingSide' : 'queenSide']: false
+            }
+          }));
+        }
+
+        // Record the move
+        const move = {
+          piece: piece,
+          from: [fromRow, fromCol],
+          to: [row, col],
+          captured: capturedPiece,
+          player: currentPlayer,
+          isCastling: pieceType === 'king' && Math.abs(fromCol - col) === 2,
+          isEnPassant: pieceType === 'pawn' && enPassantTarget && 
+                      row === enPassantTarget.row && col === enPassantTarget.col,
+          isPromotion: pieceType === 'pawn' && (row === 0 || row === 7)
+        };
+        setMoveHistory(prev => [...prev, move]);
+
+        // Update board and switch player
+        setBoard(newBoard);
+        setCurrentPlayer(currentPlayer === 'white' ? 'black' : 'white');
+        
+        // Check for checkmate
+        if (isCheckmate(!isWhitePiece)) {
+          setGameOver(true);
+          setWinner(currentPlayer);
+          setGameStatus('CHECKMATE!');
+          setIsKingInCheck(false);
+          setShowGameOverModal(true);
+          
+          // Update win tally
+          const newTally = {
+            ...winTally,
+            [currentPlayer]: (winTally[currentPlayer] || 0) + 1
+          };
+          setWinTally(newTally);
+          saveWinTally(newTally);
+          
+          // Show enhanced win alert with confetti effect
+          Alert.alert(
+            "🎉 Victory! 🎉",
+            `${playerNames[currentPlayer] || currentPlayer.toUpperCase()} wins by checkmate!\n\nCongratulations!`,
+            [
+              { 
+                text: "New Game",
+                onPress: resetGame,
+                style: "default"
+              },
+              { 
+                text: "Exit",
+                onPress: handleExit,
+                style: "cancel"
+              }
+            ]
+          );
+        } else if (isInCheck(!isWhitePiece)) {
+          setGameStatus('CHECK!');
+          setIsKingInCheck(true);
+          // Show check alert
+          Alert.alert(
+            "Check!",
+            `${currentPlayer === 'white' ? playerNames.black || 'Black' : playerNames.white || 'White'} king is in check!`,
+            [{ text: "OK" }]
+          );
+        } else {
+          setGameStatus('');
+          setIsKingInCheck(false);
+        }
+
+        // Animate the move
+        animateMove(fromRow, fromCol, row, col);
+      }
+      setSelectedPiece(null);
+      setValidMoves([]);
+    } else {
+      const piece = board[row][col];
+      if (piece) {
+        const isWhitePiece = piece.startsWith('white_');
+        if ((isWhitePiece && currentPlayer === 'white') || (!isWhitePiece && currentPlayer === 'black')) {
+          setSelectedPiece([row, col]);
+          const moves = [];
+          for (let i = 0; i < BOARD_SIZE; i++) {
+            for (let j = 0; j < BOARD_SIZE; j++) {
+              if (isValidMove(row, col, i, j)) {
+                moves.push([i, j]);
+              }
+            }
+          }
+          setValidMoves(moves);
+        }
+      }
+    }
+  };
+
+  const handleTimeSelection = (minutes) => {
+    setSelectedTime(minutes);
+    if (useTimer) {
+      setWhiteTime(minutes * 60);
+      setBlackTime(minutes * 60);
+    }
+    setShowTimeSelectionModal(false);
+    setIsTimerRunning(useTimer);
+  };
+
+  const handleTimerToggle = (useTimerValue) => {
+    setUseTimer(useTimerValue);
+    if (!useTimerValue) {
+      setWhiteTime(0);
+      setBlackTime(0);
+    } else {
+      setWhiteTime(selectedTime * 60);
+      setBlackTime(selectedTime * 60);
+    }
+  };
+
+  const resetGame = () => {
+    setBoard(initialBoard);
+    setCurrentPlayer('white');
+    setSelectedPiece(null);
+    setValidMoves([]);
+    setGameOver(false);
+    setWinner(null);
     setShowGameOverModal(false);
-    setEnteredName(false);
+    setCapturedPieces({ white: [], black: [] });
+    setMoveHistory([]);
+    setEnPassantTarget(null);
+    setCastlingRights({
+      white: { kingSide: true, queenSide: true },
+      black: { kingSide: true, queenSide: true }
+    });
+    setWhiteTime(selectedTime * 60);
+    setBlackTime(selectedTime * 60);
+    setIsTimerRunning(useTimer);
+    setGameStatus('');
+    AsyncStorage.removeItem('chessGameState');
   };
 
-  const selectDifficulty = (level) => {
-    setDifficulty(level);
-    setShowDifficulty(false);
-    startGame();
-  };
+  const renderCell = (row, col) => {
+    const piece = board[row][col];
+    const isSelected = selectedPiece && selectedPiece[0] === row && selectedPiece[1] === col;
+    const isValidMoveCell = validMoves.some(([r, c]) => r === row && c === col);
+    const isEven = (row + col) % 2 === 0;
+    const isLastMove = lastMove && 
+      ((lastMove.from[0] === row && lastMove.from[1] === col) || 
+       (lastMove.to[0] === row && lastMove.to[1] === col));
 
-  if (!enteredName) {
-    return (
-      <KeyboardAvoidingView 
-        style={[styles.centered, isDay ? styles.dayTheme : styles.nightTheme]} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.inputContainer}>
-          <Text style={[styles.title, isDay ? styles.dayText : styles.nightText]}>Welcome to FlappyBall!</Text>
-          <TextInput
-            placeholder="Enter your name"
-            value={playerName}
-            onChangeText={setPlayerName}
-            style={[
-              styles.input,
-              {
-                backgroundColor: isDay ? '#fff' : '#333',
-                color: isDay ? '#000' : '#fff',
-              }
-            ]}
-            placeholderTextColor={isDay ? '#666' : '#999'}
-          />
-          <TouchableOpacity 
-            style={[styles.startButton, isDay ? styles.dayButton : styles.nightButton]}
-            onPress={() => {
-              if (playerName.trim()) {
-                setEnteredName(true);
-                setShowDifficulty(true);
-              } else {
-                setShowNameAlert(true);
-              }
-            }}
-          >
-            <Text style={styles.startButtonText}>Start Game</Text>
-          </TouchableOpacity>
-        </View>
+    // Check if this cell contains a king in check
+    const isKingInCheckCell = piece && 
+      ((piece === 'white_king' && isInCheck(true)) || 
+       (piece === 'black_king' && isInCheck(false)));
 
-        <Modal
-          visible={showNameAlert}
-          transparent={true}
-          animationType="fade"
+    const showNumber = col === 0;
+    const showLetter = row === 7;
+    const number = 8 - row;
+    const letter = String.fromCharCode(97 + col);
+
+    if (piece) {
+      const isWhitePiece = piece.startsWith('white_');
+      const pieceType = piece.split('_')[1];
+
+      return (
+        <TouchableOpacity
+          key={`cell-${row}-${col}`}
+          style={[
+            styles.cell,
+            isEven ? styles.lightCell : styles.darkCell,
+            isSelected && styles.selectedCell,
+            isValidMoveCell && styles.validMoveCell,
+            isLastMove && styles.lastMoveCell,
+            isKingInCheckCell && styles.kingInCheckCell
+          ]}
+          onPress={() => handleCellPress(row, col)}
         >
-          <View style={styles.modalOverlay}>
-            <View style={[styles.alertModal, isDay ? styles.dayModal : styles.nightModal]}>
-              <Text style={[styles.alertTitle, isDay ? styles.dayText : styles.nightText]}>Missing Name</Text>
-              <Text style={[styles.alertMessage, isDay ? styles.dayText : styles.nightText]}>
-                Please enter your name to continue
+          <View style={styles.pieceContainer}>
+            {isKingInCheckCell ? (
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <Text style={[
+                  styles.piece,
+                  isWhitePiece ? styles.whitePiece : styles.blackPiece,
+                  styles.kingInCheckPiece
+                ]}>
+                  {isWhitePiece ? PIECES.white[pieceType] : PIECES.black[pieceType]}
+                </Text>
+              </Animated.View>
+            ) : (
+              <Text style={[
+                styles.piece,
+                isWhitePiece ? styles.whitePiece : styles.blackPiece
+              ]}>
+                {isWhitePiece ? PIECES.white[pieceType] : PIECES.black[pieceType]}
               </Text>
-              <TouchableOpacity 
-                style={[styles.alertButton, isDay ? styles.dayButton : styles.nightButton]}
-                onPress={() => setShowNameAlert(false)}
-              >
-                <Text style={styles.alertButtonText}>OK</Text>
-              </TouchableOpacity>
-            </View>
+            )}
           </View>
-        </Modal>
-      </KeyboardAvoidingView>
+          {showNumber && (
+            <Text style={[styles.cellCoordinate, styles.cellNumber]}>
+              {number}
+            </Text>
+          )}
+          {showLetter && (
+            <Text style={[styles.cellCoordinate, styles.cellLetter]}>
+              {letter}
+            </Text>
+          )}
+        </TouchableOpacity>
+      );
+    }
+
+    return (
+      <TouchableOpacity
+        key={`cell-${row}-${col}`}
+        style={[
+          styles.cell,
+          isEven ? styles.lightCell : styles.darkCell,
+          isSelected && styles.selectedCell,
+          isValidMoveCell && styles.validMoveCell,
+          isLastMove && styles.lastMoveCell
+        ]}
+        onPress={() => handleCellPress(row, col)}
+      >
+        {isValidMoveCell && (
+          <View style={styles.validMoveIndicator} />
+        )}
+        {showNumber && (
+          <Text style={[styles.cellCoordinate, styles.cellNumber]}>
+            {number}
+          </Text>
+        )}
+        {showLetter && (
+          <Text style={[styles.cellCoordinate, styles.cellLetter]}>
+            {letter}
+          </Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  const handleStartGame = () => {
+    if (!selectedColor || !playerNames[selectedColor]) {
+      Alert.alert(
+        "Setup Required",
+        "Please select your color and enter your name to start the game.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
+    setShowStartScreen(false);
+    setShowTimeSelectionModal(true);
+  };
+
+  const handlePause = () => {
+    setShowPauseMenu(true);
+    setIsTimerRunning(false);
+  };
+
+  const handleResume = () => {
+    setShowPauseMenu(false);
+    setIsTimerRunning(true);
+  };
+
+  const handleExit = () => {
+    router.replace('/');
+  };
+
+  const handleColorSelection = (color) => {
+    setSelectedColor(color);
+  };
+
+  const handleNameChange = (color, name) => {
+    setPlayerNames(prev => ({
+      ...prev,
+      [color]: name
+    }));
+  };
+
+  const isCheckmate = (isWhite) => {
+    // First check if the king is in check
+    if (!isInCheck(isWhite)) return false;
+
+    // Try all possible moves for all pieces of the current player
+    for (let row = 0; row < BOARD_SIZE; row++) {
+      for (let col = 0; col < BOARD_SIZE; col++) {
+        const piece = board[row][col];
+        if (piece && piece.startsWith(isWhite ? 'white_' : 'black_')) {
+          // Try all possible moves for this piece
+          for (let toRow = 0; toRow < BOARD_SIZE; toRow++) {
+            for (let toCol = 0; toCol < BOARD_SIZE; toCol++) {
+              if (isValidMove(row, col, toRow, toCol)) {
+                // If any valid move exists, it's not checkmate
+                return false;
+              }
+            }
+          }
+        }
+      }
+    }
+    // If no valid moves are found, it's checkmate
+    return true;
+  };
+
+  // Add this new function to load win tally
+  const loadWinTally = async () => {
+    try {
+      const savedTally = await AsyncStorage.getItem('chessWinTally');
+      if (savedTally) {
+        setWinTally(JSON.parse(savedTally));
+      }
+    } catch (error) {
+      console.error('Error loading win tally:', error);
+    }
+  };
+
+  // Add this new function to save win tally
+  const saveWinTally = async (newTally) => {
+    try {
+      await AsyncStorage.setItem('chessWinTally', JSON.stringify(newTally));
+    } catch (error) {
+      console.error('Error saving win tally:', error);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <StatusBar style="light" />
+        <Animated.View style={[styles.loadingContent, { opacity: fadeAnim }]}>
+          <Text style={styles.loadingText}>Loading Chess Game</Text>
+          <View style={styles.loadingDots}>
+            <Text style={styles.loadingDot}>.</Text>
+            <Text style={styles.loadingDot}>.</Text>
+            <Text style={styles.loadingDot}>.</Text>
+          </View>
+        </Animated.View>
+      </View>
     );
   }
 
-  if (showDifficulty) {
+  if (showStartScreen) {
     return (
-      <View style={[styles.centered, isDay ? styles.dayTheme : styles.nightTheme]}>
-        <View style={styles.difficultyContainer}>
-          <Text style={[styles.difficultyTitle, isDay ? styles.dayText : styles.nightText]}>Select Difficulty</Text>
+      <View style={[styles.container, styles.startContainer]}>
+        <StatusBar style="light" />
+        <Animated.View 
+          style={[
+            styles.startContent,
+            {
+              opacity: fadeAnim,
+              transform: [{ scale: scaleAnim }]
+            }
+          ]}
+        >
+          <Text style={styles.gameTitle}>Chess Game</Text>
+          <Text style={styles.gameSubtitle}>Challenge Your Mind</Text>
           
-          <TouchableOpacity 
-            style={[styles.difficultyButton, isDay ? styles.dayButton : styles.nightButton]}
-            onPress={() => selectDifficulty('easy')}
-          >
-            <Text style={styles.difficultyButtonText}>Easy</Text>
-            <Text style={styles.difficultyDescription}>Larger gaps, slower speed</Text>
-          </TouchableOpacity>
+          <View style={styles.playerSetupContainer}>
+            <Text style={styles.setupTitle}>Step 1: Choose Your Color</Text>
+            <View style={styles.colorSelectionContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.colorButton,
+                  selectedColor === 'white' && styles.selectedColorButton
+                ]}
+                onPress={() => handleColorSelection('white')}
+              >
+                <Text style={styles.colorButtonText}>White</Text>
+                <Text style={styles.colorButtonSubtext}>First Move</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.colorButton,
+                  selectedColor === 'black' && styles.selectedColorButton
+                ]}
+                onPress={() => handleColorSelection('black')}
+              >
+                <Text style={styles.colorButtonText}>Black</Text>
+                <Text style={styles.colorButtonSubtext}>Second Move</Text>
+              </TouchableOpacity>
+            </View>
 
-          <TouchableOpacity 
-            style={[styles.difficultyButton, isDay ? styles.dayButton : styles.nightButton]}
-            onPress={() => selectDifficulty('medium')}
-          >
-            <Text style={styles.difficultyButtonText}>Medium</Text>
-            <Text style={styles.difficultyDescription}>Balanced gameplay</Text>
-          </TouchableOpacity>
+            <View style={styles.nameInputContainer}>
+              <Text style={styles.setupTitle}>Step 2: Enter Your Name</Text>
+              <TextInput
+                style={[
+                  styles.nameInput,
+                  selectedColor === 'white' && styles.activeNameInput
+                ]}
+                placeholder="Enter your name"
+                placeholderTextColor="#bdc3c7"
+                value={playerNames.white}
+                onChangeText={(text) => handleNameChange('white', text)}
+                editable={selectedColor === 'white'}
+              />
+              <TextInput
+                style={[
+                  styles.nameInput,
+                  selectedColor === 'black' && styles.activeNameInput
+                ]}
+                placeholder="Enter your name"
+                placeholderTextColor="#bdc3c7"
+                value={playerNames.black}
+                onChangeText={(text) => handleNameChange('black', text)}
+                editable={selectedColor === 'black'}
+              />
+            </View>
 
-          <TouchableOpacity 
-            style={[styles.difficultyButton, isDay ? styles.dayButton : styles.nightButton]}
-            onPress={() => selectDifficulty('hard')}
-          >
-            <Text style={styles.difficultyButtonText}>Hard</Text>
-            <Text style={styles.difficultyDescription}>Smaller gaps, faster speed</Text>
-          </TouchableOpacity>
+            <View style={styles.setupStatusContainer}>
+              <Text style={styles.setupStatusText}>
+                {!selectedColor 
+                  ? "Please select your color"
+                  : !playerNames[selectedColor]
+                    ? "Please enter your name"
+                    : "Ready to start!"}
+              </Text>
+            </View>
+          </View>
 
-          <TouchableOpacity 
-            style={[styles.backButton, isDay ? styles.dayButton : styles.nightButton]}
-            onPress={() => {
-              setShowDifficulty(false);
-              setEnteredName(false);
-            }}
+          <TouchableOpacity
+            style={[
+              styles.startButton,
+              (!selectedColor || !playerNames[selectedColor]) && styles.disabledButton
+            ]}
+            onPress={handleStartGame}
+            disabled={!selectedColor || !playerNames[selectedColor]}
           >
-            <Text style={styles.backButtonText}>Back</Text>
+            <Text style={styles.startButtonText}>Start Game</Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, isDay ? styles.dayTheme : styles.nightTheme]}>
-      <StatusBar style={isDay ? "dark" : "light"} />
+    <View style={[styles.container, styles.chessTheme]}>
+      <StatusBar style="light" />
       <View style={styles.headerContainer}>
-        <Text style={[styles.header, isDay ? styles.dayText : styles.nightText]}>
-          FlappyBall - {playerName}
+        <Text style={[styles.header, styles.chessText]}>
+          {currentPlayer === 'white' 
+            ? `${playerNames.white || 'White'}'s turn`
+            : `${playerNames.black || 'Black'}'s turn`}
         </Text>
-        <Ionicons 
-          name={isDay ? "sunny" : "moon"} 
-          size={24} 
-          color={isDay ? "#3498db" : "#f1f5f9"} 
-        />
+        <TouchableOpacity
+          style={styles.pauseButton}
+          onPress={handlePause}
+        >
+          <Text style={styles.pauseButtonText}>⏸</Text>
+        </TouchableOpacity>
       </View>
 
-      {showPlayButton && !running && (
-        <TouchableOpacity 
-          style={[styles.playButton, isDay ? styles.dayButton : styles.nightButton]}
-          onPress={startGame}
-        >
-          <Text style={styles.playButtonText}>Play</Text>
-        </TouchableOpacity>
-      )}
+      <View style={styles.timerContainer}>
+        <View style={[styles.timer, currentPlayer === 'black' && styles.activeTimer]}>
+          <Text style={[styles.timerText, styles.chessText]}>
+            Black: {formatTime(blackTime)}
+          </Text>
+        </View>
+        <View style={[styles.timer, currentPlayer === 'white' && styles.activeTimer]}>
+          <Text style={[styles.timerText, styles.chessText]}>
+            White: {formatTime(whiteTime)}
+          </Text>
+        </View>
+      </View>
 
-      <TouchableOpacity 
-        onPress={handleJump} 
-        style={[styles.gameArea, isDay ? styles.dayGameArea : styles.nightGameArea]}
-        activeOpacity={1}
-      >
-        {/* Day Elements */}
-        {isDay && (
-          <>
-            {/* Sun */}
-            <View style={styles.sun} />
-            
-            {/* Clouds */}
-            {clouds.map((cloud, index) => (
-              <View 
-                key={`cloud-${index}`}
-                style={[
-                  styles.cloud,
-                  {
-                    left: cloud.x,
-                    top: cloud.y,
-                    width: cloud.size,
-                    height: cloud.size * 0.6,
-                  }
-                ]}
-              />
+      <View style={styles.gameContainer}>
+        <View style={styles.boardContainer}>
+          <View style={styles.board}>
+            {board.map((row, rowIndex) => (
+              <View key={`row-${rowIndex}`} style={styles.row}>
+                {row.map((_, colIndex) => renderCell(rowIndex, colIndex))}
+              </View>
             ))}
-            
-            {/* Birds */}
-            {birds.map((bird, index) => (
-              <View 
-                key={`bird-${index}`}
-                style={[
-                  styles.bird,
-                  {
-                    left: bird.x,
-                    top: bird.y,
-                    width: bird.size,
-                    height: bird.size * 0.5,
-                  }
-                ]}
-              />
-            ))}
-          </>
-        )}
-
-        {/* Night Elements */}
-        {!isDay && (
-          <>
-            {/* Moon */}
-            <View style={styles.moon} />
-            
-            {/* Stars */}
-            {stars.map((star, index) => (
-              <View 
-                key={`star-${index}`}
-                style={[
-                  styles.star,
-                  {
-                    left: star.x,
-                    top: star.y,
-                    width: star.size,
-                    height: star.size,
-                  }
-                ]}
-              />
-            ))}
-            
-            {/* Night Clouds */}
-            {clouds.map((cloud, index) => (
-              <View 
-                key={`night-cloud-${index}`}
-                style={[
-                  styles.nightCloud,
-                  {
-                    left: cloud.x,
-                    top: cloud.y,
-                    width: cloud.size,
-                    height: cloud.size * 0.6,
-                  }
-                ]}
-              />
-            ))}
-          </>
-        )}
-
-        {/* Ground */}
-        <View style={[styles.ground, isDay ? styles.dayGround : styles.nightGround]} />
-
-        <View style={[styles.ball, { top: ballY.current }, isDay ? styles.dayBall : styles.nightBall]} />
-        {obstacles.current.map((obs, index) => (
-          <View key={index}>
-            <View 
-              style={[
-                styles.obstacle, 
-                { left: obs.x, height: obs.topHeight }, 
-                isDay ? styles.dayObstacle : styles.nightObstacle
-              ]} 
-            />
-            <View 
-              style={[
-                styles.obstacle, 
-                {
-                  left: obs.x,
-                  top: obs.topHeight + GAP_SIZE,
-                  height: 600 - obs.topHeight - GAP_SIZE,
-                }, 
-                isDay ? styles.dayObstacle : styles.nightObstacle
-              ]} 
-            />
           </View>
-        ))}
-      </TouchableOpacity>
 
-      <Text style={[styles.score, isDay ? styles.dayText : styles.nightText]}>Score: {score}</Text>
+          {/* Game Status Display */}
+          {gameStatus && (
+            <View style={[
+              styles.gameStatusContainer,
+              gameStatus === 'CHECKMATE!' ? styles.checkmateStatus : styles.checkStatus
+            ]}>
+              <Text style={styles.gameStatusText}>{gameStatus}</Text>
+            </View>
+          )}
+
+          <View style={styles.capturedContainer}>
+            <View style={styles.capturedSection}>
+              <Text style={[styles.capturedTitle, styles.chessText]}>White's Captures:</Text>
+              <View style={styles.capturedPiecesList}>
+                {capturedPieces.white.map((piece, index) => (
+                  <Text 
+                    key={`white-captured-${index}-${piece}`} 
+                    style={[styles.capturedPiece, styles.blackPiece]}
+                  >
+                    {PIECES.black[piece.split('_')[1]]}
+                  </Text>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.capturedSection}>
+              <Text style={[styles.capturedTitle, styles.chessText]}>Black's Captures:</Text>
+              <View style={styles.capturedPiecesList}>
+                {capturedPieces.black.map((piece, index) => (
+                  <Text 
+                    key={`black-captured-${index}-${piece}`} 
+                    style={[styles.capturedPiece, styles.whitePiece]}
+                  >
+                    {PIECES.white[piece.split('_')[1]]}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <ScrollView style={styles.moveHistoryContainer}>
+          <Text style={[styles.moveHistoryTitle, styles.chessText]}>Move History:</Text>
+          {moveHistory.map((move, index) => (
+            <Text 
+              key={`move-${index}-${move.from[0]}-${move.from[1]}-${move.to[0]}-${move.to[1]}`} 
+              style={[styles.moveHistoryText, styles.chessText]}
+            >
+              {index + 1}. {playerNames[move.player] || move.player}: {move.piece.split('_')[1]} from [{move.from[0]},{move.from[1]}] to [{move.to[0]},{move.to[1]}]
+              {move.captured ? ` (captured ${move.captured.split('_')[1]})` : ''}
+              {move.isPromotion ? ` (promoted to ${move.promotedTo})` : ''}
+              {move.isCastling ? ' (castling)' : ''}
+              {move.isEnPassant ? ' (en passant)' : ''}
+            </Text>
+          ))}
+        </ScrollView>
+      </View>
 
       <Modal
         visible={showGameOverModal}
@@ -454,47 +1144,176 @@ export default function App() {
         animationType="slide"
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, isDay ? styles.dayModal : styles.nightModal]}>
-            <Text style={[styles.modalTitle, isDay ? styles.dayText : styles.nightText]}>Game Over!</Text>
-            <Text style={[styles.modalScore, isDay ? styles.dayText : styles.nightText]}>Score: {score}</Text>
-            
+          <View style={[styles.modalContent, styles.chessModal, styles.victoryModal]}>
+            <Text style={[styles.modalTitle, styles.chessText, styles.victoryTitle]}>
+              {winner ? `🏆 ${winner.toUpperCase()} Wins! 🏆` : 'Game Over!'}
+            </Text>
+            <Text style={[styles.victorySubtitle, styles.chessText]}>
+              {whiteTime === 0 ? 'Victory by Time!' : 
+               blackTime === 0 ? 'Victory by Time!' : 
+               winner ? 'Victory by Checkmate!' : 'Game Ended'}
+            </Text>
+            <Text style={[styles.victoryPlayer, styles.chessText]}>
+              {winner ? (playerNames[winner] || winner.toUpperCase()) : 'No Winner'}
+            </Text>
             <View style={styles.modalButtonsContainer}>
-              <TouchableOpacity 
-                style={[styles.modalButton, isDay ? styles.dayButton : styles.nightButton]}
-                onPress={goToHome}
+              <TouchableOpacity
+                style={[styles.modalButton, styles.chessButton, styles.victoryButton]}
+                onPress={resetGame}
               >
-                <Text style={styles.modalButtonText}>Back</Text>
+                <Text style={styles.modalButtonText}>New Game</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.modalButton, isDay ? styles.dayButton : styles.nightButton]}
-                onPress={startGame}
+              <TouchableOpacity
+                style={[styles.modalButton, styles.chessButton, styles.exitButton]}
+                onPress={handleExit}
               >
-                <Text style={styles.modalButtonText}>Play Again</Text>
+                <Text style={styles.modalButtonText}>Exit</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      <View style={[styles.leaderboard, isDay ? styles.dayLeaderboard : styles.nightLeaderboard]}>
-        <Text style={[styles.leaderboardTitle, isDay ? styles.dayText : styles.nightText]}>
-          Leaderboard - {difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}
-        </Text>
-        <FlatList
-          data={leaderboard[difficulty]}
-          keyExtractor={(item, index) => `${item.name}-${item.date}-${index}`}
-          renderItem={({ item, index }) => (
-            <View style={styles.leaderboardItemContainer}>
-              <Text style={[styles.leaderboardItem, isDay ? styles.dayText : styles.nightText]}>
-                {index + 1}. {item.name} - {item.score}
-              </Text>
-              <Text style={[styles.leaderboardDate, isDay ? styles.dayText : styles.nightText]}>
-                {item.date}
-              </Text>
+      <Modal
+        visible={showPromotionModal}
+        transparent={true}
+        animationType="slide"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.chessModal]}>
+            <Text style={[styles.modalTitle, styles.chessText]}>
+              Choose Promotion Piece
+            </Text>
+            <View style={styles.promotionButtons}>
+              {['queen', 'rook', 'bishop', 'knight'].map((piece) => (
+                <TouchableOpacity
+                  key={`promotion-${piece}`}
+                  style={[styles.promotionButton, styles.chessButton]}
+                  onPress={() => handlePromotion(piece)}
+                >
+                  <Text style={[styles.promotionPiece, 
+                    currentPlayer === 'white' ? styles.whitePiece : styles.blackPiece]}>
+                    {currentPlayer === 'white' ? PIECES.white[piece] : PIECES.black[piece]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-          )}
-        />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showTimeSelectionModal}
+        transparent={true}
+        animationType="slide"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.chessModal]}>
+            <Text style={[styles.modalTitle, styles.chessText]}>
+              Game Settings
+            </Text>
+            
+            <View style={styles.timerToggleContainer}>
+              <Text style={[styles.timerToggleLabel, styles.chessText]}>Use Timer:</Text>
+              <View style={styles.timerToggleButtons}>
+                <TouchableOpacity
+                  style={[
+                    styles.timerToggleButton,
+                    useTimer && styles.selectedTimerToggle
+                  ]}
+                  onPress={() => handleTimerToggle(true)}
+                >
+                  <Text style={styles.timerToggleText}>Yes</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.timerToggleButton,
+                    !useTimer && styles.selectedTimerToggle
+                  ]}
+                  onPress={() => handleTimerToggle(false)}
+                >
+                  <Text style={styles.timerToggleText}>No</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {useTimer && (
+              <View style={styles.timeSelectionContainer}>
+                <Text style={[styles.timeSelectionTitle, styles.chessText]}>
+                  Select Game Duration
+                </Text>
+                {TIME_OPTIONS.map((minutes) => (
+                  <TouchableOpacity
+                    key={`time-${minutes}`}
+                    style={[
+                      styles.timeButton,
+                      selectedTime === minutes && styles.selectedTimeButton
+                    ]}
+                    onPress={() => handleTimeSelection(minutes)}
+                  >
+                    <Text style={[styles.timeButtonText, styles.chessText]}>
+                      {minutes} minutes
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {!useTimer && (
+              <TouchableOpacity
+                style={[styles.timeButton, styles.selectedTimeButton]}
+                onPress={() => handleTimeSelection(0)}
+              >
+                <Text style={[styles.timeButtonText, styles.chessText]}>
+                  Start Game Without Timer
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showPauseMenu}
+        transparent={true}
+        animationType="slide"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.chessModal]}>
+            <Text style={[styles.modalTitle, styles.chessText]}>
+              Game Paused
+            </Text>
+            <View style={styles.pauseMenuButtons}>
+              <TouchableOpacity
+                style={[styles.pauseMenuButton, styles.chessButton]}
+                onPress={handleResume}
+              >
+                <Text style={styles.modalButtonText}>Resume</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.pauseMenuButton, styles.chessButton]}
+                onPress={resetGame}
+              >
+                <Text style={styles.modalButtonText}>Restart</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.pauseMenuButton, styles.chessButton]}
+                onPress={handleExit}
+              >
+                <Text style={styles.modalButtonText}>Exit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <View style={styles.tallyContainer}>
+        <Text style={[styles.tallyText, styles.chessText]}>
+          {playerNames.white || 'White'}: {winTally.white} wins
+        </Text>
+        <Text style={[styles.tallyText, styles.chessText]}>
+          {playerNames.black || 'Black'}: {winTally.black} wins
+        </Text>
       </View>
     </View>
   );
@@ -506,12 +1325,11 @@ const styles = StyleSheet.create({
     paddingTop: 30,
     paddingHorizontal: 10,
   },
-  dayTheme: {
-    backgroundColor: '#f0f4f8',
-    backgroundImage: 'linear-gradient(135deg, #f0f4f8 0%, #e6f0f7 50%, #d9e9f2 100%)',
+  chessTheme: {
+    backgroundColor: '#2c3e50',
   },
-  nightTheme: {
-    backgroundColor: '#0f172a',
+  chessText: {
+    color: '#ecf0f1',
   },
   headerContainer: {
     flexDirection: 'row',
@@ -519,262 +1337,175 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 15,
     marginBottom: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    backgroundColor: '#34495e',
     paddingVertical: 12,
     borderRadius: 12,
     marginHorizontal: 8,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.03)',
   },
   header: {
     fontSize: 22,
     fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
   },
-  dayText: {
-    color: '#2c3e50',
-  },
-  nightText: {
-    color: '#f1f5f9',
-  },
-  gameArea: {
+  gameContainer: {
     flex: 1,
-    borderRadius: 15,
-    margin: 10,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.05)',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-  },
-  dayGameArea: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-  },
-  nightGameArea: {
-    backgroundColor: '#1e293b',
-  },
-  ball: {
-    width: BALL_SIZE,
-    height: BALL_SIZE,
-    borderRadius: BALL_SIZE / 2,
-    position: 'absolute',
-    left: 100,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  dayBall: {
-    backgroundColor: '#3498db',
-  },
-  nightBall: {
-    backgroundColor: '#facc15',
-  },
-  obstacle: {
-    width: OBSTACLE_WIDTH,
-    position: 'absolute',
-    top: 0,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  dayObstacle: {
-    backgroundColor: '#95a5a6',
-    backgroundImage: 'linear-gradient(90deg, #bdc3c7 0%, #95a5a6 50%, #7f8c8d 100%)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.05)',
-  },
-  nightObstacle: {
-    backgroundColor: '#64748b',
-  },
-  score: {
-    fontSize: 28,
-    textAlign: 'center',
-    marginVertical: 10,
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  restartButton: {
-    margin: 10,
-    padding: 15,
-    borderRadius: 10,
-  },
-  dayButton: {
-    backgroundColor: '#3b82f6',
-  },
-  nightButton: {
-    backgroundColor: '#f59e0b',
-  },
-  restartText: {
-    textAlign: 'center',
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  leaderboard: {
-    padding: 12,
-    borderRadius: 12,
-    margin: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.03)',
-  },
-  dayLeaderboard: {
-    backgroundColor: '#ffffff',
-  },
-  nightLeaderboard: {
-    backgroundColor: '#1e293b',
-  },
-  leaderboardTitle: {
-    fontSize: 20,
-    marginBottom: 15,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  leaderboardItemContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
-  leaderboardItem: {
-    fontSize: 16,
-    fontWeight: '500',
+  boardContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
   },
-  leaderboardDate: {
-    fontSize: 12,
-    opacity: 0.7,
+  board: {
+    aspectRatio: 1,
+    width: '95%',
+    backgroundColor: '#8B4513',
+    borderRadius: 12,
+    padding: 10,
+    marginVertical: 10,
+    borderWidth: 2,
+    borderColor: '#DAA520',
   },
-  centered: {
+  row: {
     flex: 1,
+    flexDirection: 'row',
+  },
+  cell: {
+    flex: 1,
+    aspectRatio: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    position: 'relative',
   },
-  title: {
-    fontSize: 36,
-    marginBottom: 30,
-    textAlign: 'center',
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  inputContainer: {
-    width: '85%',
-    alignItems: 'center',
-    backgroundColor: 'rgba(236, 240, 241, 0.8)',
-    padding: 25,
-    borderRadius: 15,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.03)',
-  },
-  input: {
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
-    width: '100%',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.1)',
-    color: '#2c3e50',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  playButton: {
+  cellCoordinate: {
     position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: [{ translateX: -50 }, { translateY: -50 }],
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  cellNumber: {
+    left: 2,
+    top: 2,
+    color: '#000000',
+  },
+  cellLetter: {
+    right: 2,
+    bottom: 2,
+    color: '#000000',
+  },
+  lightCell: {
+    backgroundColor: '#F0D9B5', // Light wood color
+  },
+  darkCell: {
+    backgroundColor: '#B58863', // Dark wood color
+  },
+  selectedCell: {
+    backgroundColor: 'rgba(123, 97, 255, 0.5)',
+  },
+  validMoveCell: {
+    backgroundColor: 'rgba(76, 175, 80, 0.3)',
+  },
+  lastMoveCell: {
+    backgroundColor: 'rgba(255, 193, 7, 0.3)',
+  },
+  validMoveIndicator: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(76, 175, 80, 0.5)',
+    position: 'absolute',
+  },
+  pieceContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  piece: {
+    fontSize: 35,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  whitePiece: {
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+  },
+  blackPiece: {
+    color: '#000000',
+    textShadowColor: 'rgba(255, 255, 255, 0.8)',
+  },
+  capturedContainer: {
+    width: '95%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#34495e',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  capturedSection: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  capturedTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 5,
+    textAlign: 'center',
+  },
+  capturedPiecesList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  capturedPiece: {
+    fontSize: 24,
+  },
+  moveHistoryContainer: {
+    width: '100%',
+    maxHeight: 150,
+    backgroundColor: '#34495e',
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 10,
+  },
+  moveHistoryTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  moveHistoryText: {
+    fontSize: 14,
+    marginBottom: 3,
+  },
+  chessButton: {
+    backgroundColor: '#3498db',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  chessModal: {
+    backgroundColor: '#34495e',
     padding: 20,
     borderRadius: 15,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  playButtonText: {
-    color: 'white',
-    fontSize: 28,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  backButton: {
     width: '80%',
-    padding: 15,
-    borderRadius: 15,
     alignItems: 'center',
-    marginTop: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
   },
-  backButtonText: {
-    color: 'white',
-    fontSize: 20,
+  modalTitle: {
+    fontSize: 24,
     fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    marginBottom: 20,
+  },
+  modalButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  modalButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   modalOverlay: {
     flex: 1,
@@ -782,272 +1513,325 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalContent: {
-    width: '85%',
-    padding: 25,
-    borderRadius: 20,
+  promotionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginTop: 20,
+  },
+  promotionButton: {
+    padding: 15,
+    borderRadius: 10,
+    backgroundColor: '#34495e',
+    minWidth: 60,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
   },
-  dayModal: {
-    backgroundColor: '#fff',
+  promotionPiece: {
+    fontSize: 30,
   },
-  nightModal: {
-    backgroundColor: '#1e293b',
+  timeSelectionContainer: {
+    width: '100%',
+    padding: 10,
   },
-  modalTitle: {
+  timeButton: {
+    backgroundColor: '#34495e',
+    padding: 15,
+    borderRadius: 10,
+    marginVertical: 5,
+    alignItems: 'center',
+  },
+  selectedTimeButton: {
+    backgroundColor: '#2ecc71',
+  },
+  timeButtonText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  timerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  timer: {
+    backgroundColor: '#34495e',
+    padding: 10,
+    borderRadius: 10,
+    marginHorizontal: 5,
+  },
+  activeTimer: {
+    backgroundColor: '#2ecc71',
+  },
+  timerText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  loadingContainer: {
+    backgroundColor: '#2c3e50',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingContent: {
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#ecf0f1',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+  },
+  loadingDots: {
+    flexDirection: 'row',
+  },
+  loadingDot: {
+    color: '#ecf0f1',
     fontSize: 32,
     fontWeight: 'bold',
+    marginHorizontal: 2,
+  },
+  startContainer: {
+    backgroundColor: '#2c3e50',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  startContent: {
+    alignItems: 'center',
+    padding: 20,
+  },
+  gameTitle: {
+    color: '#ecf0f1',
+    fontSize: 48,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  gameSubtitle: {
+    color: '#bdc3c7',
+    fontSize: 24,
+    marginBottom: 40,
+    textAlign: 'center',
+  },
+  startButton: {
+    backgroundColor: '#3498db',
+    paddingHorizontal: 40,
+    paddingVertical: 15,
+    borderRadius: 25,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  startButtonText: {
+    color: '#ffffff',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  pauseButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#3498db',
+  },
+  pauseButtonText: {
+    fontSize: 24,
+    color: '#ffffff',
+  },
+  pauseMenuButtons: {
+    width: '100%',
+    gap: 15,
+  },
+  pauseMenuButton: {
+    width: '100%',
+    padding: 15,
+    borderRadius: 10,
+    backgroundColor: '#3498db',
+    alignItems: 'center',
+  },
+  playerSetupContainer: {
+    width: '100%',
+    padding: 20,
+    backgroundColor: '#34495e',
+    borderRadius: 15,
+    marginBottom: 30,
+  },
+  setupTitle: {
+    color: '#ecf0f1',
+    fontSize: 20,
+    fontWeight: 'bold',
     marginBottom: 15,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textAlign: 'center',
+  },
+  colorSelectionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 20,
+  },
+  colorButton: {
+    paddingHorizontal: 30,
+    paddingVertical: 15,
+    borderRadius: 10,
+    backgroundColor: '#3498db',
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  selectedColorButton: {
+    backgroundColor: '#2ecc71',
+  },
+  colorButtonText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  colorButtonSubtext: {
+    color: '#ffffff',
+    fontSize: 12,
+    marginTop: 5,
+  },
+  nameInputContainer: {
+    width: '100%',
+  },
+  nameInput: {
+    backgroundColor: '#2c3e50',
+    color: '#ecf0f1',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 10,
+    fontSize: 16,
+    opacity: 0.5,
+  },
+  activeNameInput: {
+    opacity: 1,
+    borderWidth: 2,
+    borderColor: '#3498db',
+  },
+  setupStatusContainer: {
+    marginTop: 15,
+    padding: 10,
+    backgroundColor: '#2c3e50',
+    borderRadius: 8,
+  },
+  setupStatusText: {
+    color: '#ecf0f1',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  timerToggleContainer: {
+    width: '100%',
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  timerToggleLabel: {
+    fontSize: 18,
+    marginBottom: 10,
+  },
+  timerToggleButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  timerToggleButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#34495e',
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  selectedTimerToggle: {
+    backgroundColor: '#2ecc71',
+  },
+  timerToggleText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  timeSelectionTitle: {
+    fontSize: 18,
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  gameStatusContainer: {
+    width: '95%',
+    padding: 10,
+    borderRadius: 8,
+    marginVertical: 10,
+    alignItems: 'center',
+  },
+  checkStatus: {
+    backgroundColor: '#e74c3c',
+  },
+  checkmateStatus: {
+    backgroundColor: '#c0392b',
+  },
+  gameStatusText: {
+    color: '#ffffff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 2,
   },
-  modalScore: {
-    fontSize: 24,
-    marginBottom: 25,
-    fontWeight: 'bold',
+  kingInCheckCell: {
+    backgroundColor: 'rgba(255, 0, 0, 0.6)',
+    borderWidth: 4,
+    borderColor: '#ff0000',
+    shadowColor: '#ff0000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 15,
+    elevation: 8,
   },
-  modalButtonsContainer: {
+  kingInCheckPiece: {
+    color: '#ff0000',
+    textShadowColor: '#ff0000',
+    textShadowOffset: { width: 3, height: 3 },
+    textShadowRadius: 6,
+    fontSize: 40,
+  },
+  victoryModal: {
+    backgroundColor: '#2c3e50',
+    padding: 30,
+    borderRadius: 20,
+    width: '90%',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#f1c40f',
+  },
+  victoryTitle: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  victorySubtitle: {
+    fontSize: 20,
+    marginBottom: 15,
+    color: '#f1c40f',
+  },
+  victoryPlayer: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 25,
+    color: '#3498db',
+  },
+  victoryButton: {
+    backgroundColor: '#2ecc71',
+    marginBottom: 10,
+  },
+  exitButton: {
+    backgroundColor: '#e74c3c',
+  },
+  tallyContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    paddingHorizontal: 20,
-    marginTop: 20,
-  },
-  modalButton: {
-    padding: 15,
-    borderRadius: 15,
-    width: '45%',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  modalButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  startButton: {
-    width: '80%',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-    backgroundColor: 'rgba(52, 152, 219, 0.8)',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  startButtonText: {
-    color: 'white',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  difficultyContainer: {
-    width: '85%',
-    alignItems: 'center',
-    backgroundColor: 'rgba(236, 240, 241, 0.8)',
-    padding: 25,
-    borderRadius: 15,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.03)',
-  },
-  difficultyTitle: {
-    fontSize: 32,
-    marginBottom: 30,
-    textAlign: 'center',
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  difficultyButton: {
-    width: '80%',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 20,
-    backgroundColor: 'rgba(52, 152, 219, 0.8)',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  difficultyButtonText: {
-    color: 'white',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  difficultyDescription: {
-    color: 'white',
-    fontSize: 14,
+    paddingHorizontal: 10,
     marginTop: 5,
-    opacity: 0.8,
   },
-  alertModal: {
-    width: '75%',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.03)',
-  },
-  alertTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  alertMessage: {
-    fontSize: 16,
-    marginBottom: 20,
-    textAlign: 'center',
-    opacity: 0.8,
-  },
-  alertButton: {
-    padding: 12,
-    borderRadius: 10,
-    width: '50%',
-    alignItems: 'center',
-  },
-  alertButtonText: {
-    color: 'white',
+  tallyText: {
     fontSize: 16,
     fontWeight: 'bold',
   },
-  sun: {
-    position: 'absolute',
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#f39c12',
-    top: 50,
-    right: 50,
-    shadowColor: '#f39c12',
-    shadowOffset: {
-      width: 0,
-      height: 0,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  moon: {
-    position: 'absolute',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#bdc3c7',
-    top: 50,
-    right: 50,
-    shadowColor: '#bdc3c7',
-    shadowOffset: {
-      width: 0,
-      height: 0,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  star: {
-    position: 'absolute',
-    backgroundColor: '#95a5a6',
-    borderRadius: 1,
-    shadowColor: '#95a5a6',
-    shadowOffset: {
-      width: 0,
-      height: 0,
-    },
-    shadowOpacity: 0.6,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  cloud: {
-    position: 'absolute',
-    backgroundColor: 'rgba(189, 195, 199, 0.7)',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  nightCloud: {
-    position: 'absolute',
-    backgroundColor: 'rgba(149, 165, 166, 0.2)',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  bird: {
-    position: 'absolute',
-    width: 20,
-    height: 10,
-    borderTopLeftRadius: 10,
-    borderTopRightRadius: 10,
-    backgroundColor: 'rgba(52, 73, 94, 0.7)',
-    transform: [{ rotate: '45deg' }],
-  },
-  ground: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 40,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  dayGround: {
-    backgroundColor: 'rgba(189, 195, 199, 0.3)',
-    backgroundImage: 'linear-gradient(180deg, rgba(189, 195, 199, 0.3) 0%, rgba(149, 165, 166, 0.4) 100%)',
-  },
-  nightGround: {
-    backgroundColor: 'rgba(100, 116, 139, 0.3)',
-  },
-});
+}); 
