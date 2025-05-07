@@ -45,6 +45,36 @@ const formatTime = (seconds) => {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 };
 
+// Add chess notation conversion functions
+const getFile = (col) => String.fromCharCode(97 + col);
+const getRank = (row) => 8 - row;
+const getSquareNotation = (row, col) => `${getFile(col)}${getRank(row)}`;
+
+const getPieceSymbol = (piece) => {
+  if (!piece) return '';
+  const type = piece.split('_')[1];
+  switch (type) {
+    case 'knight': return 'N';
+    case 'bishop': return 'B';
+    case 'rook': return 'R';
+    case 'queen': return 'Q';
+    case 'king': return 'K';
+    default: return '';
+  }
+};
+
+const getMoveNotation = (move) => {
+  const pieceSymbol = getPieceSymbol(move.piece);
+  const fromSquare = getSquareNotation(move.from[0], move.from[1]);
+  const toSquare = getSquareNotation(move.to[0], move.to[1]);
+  const isCapture = move.captured ? 'x' : '';
+  const isCheck = move.isCheck ? '+' : '';
+  const isCheckmate = move.isCheckmate ? '#' : '';
+  const promotion = move.isPromotion ? `=${move.promotedTo.toUpperCase()}` : '';
+  
+  return `${pieceSymbol}${isCapture}${toSquare}${promotion}${isCheck}${isCheckmate}`;
+};
+
 export default function ChessGame() {
   const router = useRouter();
   const [board, setBoard] = useState(initialBoard);
@@ -82,6 +112,8 @@ export default function ChessGame() {
   const [isKingInCheck, setIsKingInCheck] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const [winTally, setWinTally] = useState({ white: 0, black: 0 });
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [showLeaderboardModal, setShowLeaderboardModal] = useState(false);
 
   // Save game state to AsyncStorage
   useEffect(() => {
@@ -353,6 +385,7 @@ export default function ChessGame() {
       for (let col = 0; col < BOARD_SIZE; col++) {
         const piece = boardState[row][col];
         if (piece && piece.startsWith(isWhite ? 'black_' : 'white_')) {
+          // Use canAttackSquare instead of isValidMove for more accurate check detection
           if (canAttackSquare(boardState, row, col, kingRow, kingCol)) {
             return true;
           }
@@ -514,11 +547,25 @@ export default function ChessGame() {
     setWinTally(newTally);
     saveWinTally(newTally);
     
+    // Save to leaderboard
+    saveToLeaderboard(winningPlayer, player);
+    
     // Show enhanced time up alert
     Alert.alert(
-      "Time's Up!",
-      `${playerNames[winningPlayer] || winningPlayer.toUpperCase()} wins on time!`,
-      [{ text: "OK" }]
+      "⏰ Time's Up! ⏰",
+      `${playerNames[winningPlayer] || winningPlayer.toUpperCase()} wins by time!\n\n${playerNames[player] || player.toUpperCase()} ran out of time!`,
+      [
+        { 
+          text: "New Game",
+          onPress: resetGame,
+          style: "default"
+        },
+        { 
+          text: "Exit",
+          onPress: handleExit,
+          style: "cancel"
+        }
+      ]
     );
   };
 
@@ -567,7 +614,6 @@ export default function ChessGame() {
           newBoard[row][newRookCol] = `${isWhitePiece ? 'white' : 'black'}_rook`;
           newBoard[fromRow][rookCol] = null;
           
-          // Update castling rights
           setCastlingRights(prev => ({
             ...prev,
             [isWhitePiece ? 'white' : 'black']: {
@@ -631,54 +677,62 @@ export default function ChessGame() {
 
         // Update board and switch player
         setBoard(newBoard);
-        setCurrentPlayer(currentPlayer === 'white' ? 'black' : 'white');
+        const nextPlayer = currentPlayer === 'white' ? 'black' : 'white';
+        setCurrentPlayer(nextPlayer);
         
-        // Check for checkmate
-        if (isCheckmate(!isWhitePiece)) {
-          setGameOver(true);
-          setWinner(currentPlayer);
-          setGameStatus('CHECKMATE!');
-          setIsKingInCheck(false);
-          setShowGameOverModal(true);
-          
-          // Update win tally
-          const newTally = {
-            ...winTally,
-            [currentPlayer]: (winTally[currentPlayer] || 0) + 1
-          };
-          setWinTally(newTally);
-          saveWinTally(newTally);
-          
-          // Show enhanced win alert with confetti effect
-          Alert.alert(
-            "🎉 Victory! 🎉",
-            `${playerNames[currentPlayer] || currentPlayer.toUpperCase()} wins by checkmate!\n\nCongratulations!`,
-            [
-              { 
-                text: "New Game",
-                onPress: resetGame,
-                style: "default"
-              },
-              { 
-                text: "Exit",
-                onPress: handleExit,
-                style: "cancel"
-              }
-            ]
-          );
-        } else if (isInCheck(!isWhitePiece)) {
-          setGameStatus('CHECK!');
-          setIsKingInCheck(true);
-          // Show check alert
-          Alert.alert(
-            "Check!",
-            `${currentPlayer === 'white' ? playerNames.black || 'Black' : playerNames.white || 'White'} king is in check!`,
-            [{ text: "OK" }]
-          );
-        } else {
-          setGameStatus('');
-          setIsKingInCheck(false);
-        }
+        // Check for game end conditions after the move
+        setTimeout(() => {
+          const isNextPlayerCheckmated = isCheckmate(nextPlayer === 'white');
+
+          if (isNextPlayerCheckmated) {
+            setGameOver(true);
+            setWinner(currentPlayer);
+            setGameStatus('CHECKMATE!');
+            setIsKingInCheck(false);
+            setShowGameOverModal(true);
+            setIsTimerRunning(false);
+            
+            // Update win tally
+            const newTally = {
+              ...winTally,
+              [currentPlayer]: (winTally[currentPlayer] || 0) + 1
+            };
+            setWinTally(newTally);
+            saveWinTally(newTally);
+            
+            // Save to leaderboard
+            saveToLeaderboard(currentPlayer, nextPlayer);
+            
+            // Show checkmate alert
+            Alert.alert(
+              "Checkmate!",
+              `${playerNames[currentPlayer] || currentPlayer.toUpperCase()} wins by checkmate!`,
+              [
+                { 
+                  text: "New Game",
+                  onPress: resetGame,
+                  style: "default"
+                },
+                { 
+                  text: "Exit",
+                  onPress: handleExit,
+                  style: "cancel"
+                }
+              ]
+            );
+          } else if (isInCheck(nextPlayer === 'white')) {
+            setGameStatus('CHECK!');
+            setIsKingInCheck(true);
+            Alert.alert(
+              "Check!",
+              `${playerNames[nextPlayer] || nextPlayer.toUpperCase()} king is in check!`,
+              [{ text: "OK" }]
+            );
+          } else {
+            setGameStatus('');
+            setIsKingInCheck(false);
+          }
+        }, 100);
 
         // Animate the move
         animateMove(fromRow, fromCol, row, col);
@@ -745,6 +799,8 @@ export default function ChessGame() {
     setBlackTime(selectedTime * 60);
     setIsTimerRunning(useTimer);
     setGameStatus('');
+    setWinTally({ white: 0, black: 0 });
+    saveWinTally({ white: 0, black: 0 });
     AsyncStorage.removeItem('chessGameState');
   };
 
@@ -879,15 +935,41 @@ export default function ChessGame() {
   };
 
   const handleNameChange = (color, name) => {
-    setPlayerNames(prev => ({
-      ...prev,
-      [color]: name
-    }));
+    setPlayerNames(prev => {
+      const newNames = {
+        ...prev,
+        [color]: name
+      };
+      
+      // Reset win tally if either player name has changed
+      if (prev[color] !== name) {
+        setWinTally({ white: 0, black: 0 });
+        saveWinTally({ white: 0, black: 0 });
+      }
+      
+      return newNames;
+    });
   };
 
   const isCheckmate = (isWhite) => {
     // First check if the king is in check
     if (!isInCheck(isWhite)) return false;
+
+    // Find the king's position
+    const kingType = isWhite ? 'white_king' : 'black_king';
+    let kingRow = -1;
+    let kingCol = -1;
+    
+    for (let row = 0; row < BOARD_SIZE; row++) {
+      for (let col = 0; col < BOARD_SIZE; col++) {
+        if (board[row][col] === kingType) {
+          kingRow = row;
+          kingCol = col;
+          break;
+        }
+      }
+      if (kingRow !== -1) break;
+    }
 
     // Try all possible moves for all pieces of the current player
     for (let row = 0; row < BOARD_SIZE; row++) {
@@ -898,36 +980,110 @@ export default function ChessGame() {
           for (let toRow = 0; toRow < BOARD_SIZE; toRow++) {
             for (let toCol = 0; toCol < BOARD_SIZE; toCol++) {
               if (isValidMove(row, col, toRow, toCol)) {
-                // If any valid move exists, it's not checkmate
-                return false;
+                // Create a temporary board to test the move
+                const tempBoard = board.map(r => [...r]);
+                tempBoard[toRow][toCol] = piece;
+                tempBoard[row][col] = null;
+
+                // Check if the move would get the king out of check
+                if (!wouldBeInCheck(tempBoard, isWhite)) {
+                  return false; // Found a valid move that gets out of check
+                }
               }
             }
           }
         }
       }
     }
-    // If no valid moves are found, it's checkmate
+
+    // Check if the king can move to any adjacent square
+    const kingMoves = [
+      [-1, -1], [-1, 0], [-1, 1],
+      [0, -1],           [0, 1],
+      [1, -1],  [1, 0],  [1, 1]
+    ];
+
+    for (const [rowOffset, colOffset] of kingMoves) {
+      const newRow = kingRow + rowOffset;
+      const newCol = kingCol + colOffset;
+
+      if (newRow >= 0 && newRow < BOARD_SIZE && newCol >= 0 && newCol < BOARD_SIZE) {
+        if (isValidMove(kingRow, kingCol, newRow, newCol)) {
+          // Create a temporary board to test the king's move
+          const tempBoard = board.map(r => [...r]);
+          tempBoard[newRow][newCol] = kingType;
+          tempBoard[kingRow][kingCol] = null;
+
+          // Check if the king would be safe in the new position
+          if (!wouldBeInCheck(tempBoard, isWhite)) {
+            return false; // King can move to a safe square
+          }
+        }
+      }
+    }
+
+    // If we get here, no valid moves were found that get out of check
     return true;
   };
 
-  // Add this new function to load win tally
+  // Update the loadWinTally function to handle leaderboard
   const loadWinTally = async () => {
     try {
       const savedTally = await AsyncStorage.getItem('chessWinTally');
-      if (savedTally) {
-        setWinTally(JSON.parse(savedTally));
+      const savedNames = await AsyncStorage.getItem('chessPlayerNames');
+      const savedLeaderboard = await AsyncStorage.getItem('chessLeaderboard');
+      
+      if (savedTally && savedNames) {
+        const parsedNames = JSON.parse(savedNames);
+        // Only load tally if the player names match
+        if (parsedNames.white === playerNames.white && parsedNames.black === playerNames.black) {
+          setWinTally(JSON.parse(savedTally));
+        } else {
+          // Reset tally if names don't match
+          setWinTally({ white: 0, black: 0 });
+          saveWinTally({ white: 0, black: 0 });
+        }
+      }
+
+      // Load leaderboard
+      if (savedLeaderboard) {
+        setLeaderboard(JSON.parse(savedLeaderboard));
       }
     } catch (error) {
-      console.error('Error loading win tally:', error);
+      console.error('Error loading win tally and leaderboard:', error);
     }
   };
 
-  // Add this new function to save win tally
+  // Update saveWinTally to handle leaderboard
   const saveWinTally = async (newTally) => {
     try {
       await AsyncStorage.setItem('chessWinTally', JSON.stringify(newTally));
+      await AsyncStorage.setItem('chessPlayerNames', JSON.stringify(playerNames));
     } catch (error) {
       console.error('Error saving win tally:', error);
+    }
+  };
+
+  // Add function to save to leaderboard
+  const saveToLeaderboard = async (winner, loser) => {
+    try {
+      const newEntry = {
+        winner: playerNames[winner] || winner.toUpperCase(),
+        loser: playerNames[loser] || loser.toUpperCase(),
+        date: new Date().toISOString(),
+        winType: gameStatus === 'CHECKMATE!' ? 'Checkmate' : 'Time'
+      };
+
+      const updatedLeaderboard = [...leaderboard, newEntry];
+      // Keep only the last 50 games
+      if (updatedLeaderboard.length > 50) {
+        updatedLeaderboard.shift();
+      }
+      
+      setLeaderboard(updatedLeaderboard);
+      await AsyncStorage.setItem('chessLeaderboard', JSON.stringify(updatedLeaderboard));
+    } catch (error) {
+      console.error('Error saving to leaderboard:', error);
     }
   };
 
@@ -1049,12 +1205,20 @@ export default function ChessGame() {
             ? `${playerNames.white || 'White'}'s turn`
             : `${playerNames.black || 'Black'}'s turn`}
         </Text>
-        <TouchableOpacity
-          style={styles.pauseButton}
-          onPress={handlePause}
-        >
-          <Text style={styles.pauseButtonText}>⏸</Text>
-        </TouchableOpacity>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity
+            style={styles.leaderboardButton}
+            onPress={() => setShowLeaderboardModal(true)}
+          >
+            <Text style={styles.leaderboardButtonText}>🏆</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.pauseButton}
+            onPress={handlePause}
+          >
+            <Text style={styles.pauseButtonText}>⏸</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.timerContainer}>
@@ -1128,11 +1292,8 @@ export default function ChessGame() {
               key={`move-${index}-${move.from[0]}-${move.from[1]}-${move.to[0]}-${move.to[1]}`} 
               style={[styles.moveHistoryText, styles.chessText]}
             >
-              {index + 1}. {playerNames[move.player] || move.player}: {move.piece.split('_')[1]} from [{move.from[0]},{move.from[1]}] to [{move.to[0]},{move.to[1]}]
-              {move.captured ? ` (captured ${move.captured.split('_')[1]})` : ''}
-              {move.isPromotion ? ` (promoted to ${move.promotedTo})` : ''}
-              {move.isCastling ? ' (castling)' : ''}
-              {move.isEnPassant ? ' (en passant)' : ''}
+              {Math.floor(index / 2) + 1}. {index % 2 === 0 ? '' : '...'} 
+              {playerNames[move.player] || move.player.toUpperCase()}: {getMoveNotation(move)}
             </Text>
           ))}
         </ScrollView>
@@ -1144,27 +1305,24 @@ export default function ChessGame() {
         animationType="slide"
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, styles.chessModal, styles.victoryModal]}>
-            <Text style={[styles.modalTitle, styles.chessText, styles.victoryTitle]}>
-              {winner ? `🏆 ${winner.toUpperCase()} Wins! 🏆` : 'Game Over!'}
+          <View style={[styles.modalContent, styles.chessModal]}>
+            <Text style={[styles.modalTitle, styles.chessText]}>
+              {winner ? `${winner.toUpperCase()} Wins!` : 'Game Over'}
             </Text>
-            <Text style={[styles.victorySubtitle, styles.chessText]}>
-              {whiteTime === 0 ? 'Victory by Time!' : 
-               blackTime === 0 ? 'Victory by Time!' : 
-               winner ? 'Victory by Checkmate!' : 'Game Ended'}
-            </Text>
-            <Text style={[styles.victoryPlayer, styles.chessText]}>
-              {winner ? (playerNames[winner] || winner.toUpperCase()) : 'No Winner'}
+            <Text style={[styles.modalText, styles.chessText]}>
+              {whiteTime === 0 ? `${playerNames.black || 'BLACK'} wins by time` :
+               blackTime === 0 ? `${playerNames.white || 'WHITE'} wins by time` :
+               winner ? `${playerNames[winner] || winningPlayer.toUpperCase()} wins by checkmate` : 'Game ended'}
             </Text>
             <View style={styles.modalButtonsContainer}>
               <TouchableOpacity
-                style={[styles.modalButton, styles.chessButton, styles.victoryButton]}
+                style={[styles.modalButton, styles.chessButton]}
                 onPress={resetGame}
               >
                 <Text style={styles.modalButtonText}>New Game</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.chessButton, styles.exitButton]}
+                style={[styles.modalButton, styles.chessButton]}
                 onPress={handleExit}
               >
                 <Text style={styles.modalButtonText}>Exit</Text>
@@ -1315,6 +1473,38 @@ export default function ChessGame() {
           {playerNames.black || 'Black'}: {winTally.black} wins
         </Text>
       </View>
+
+      <Modal
+        visible={showLeaderboardModal}
+        transparent={true}
+        animationType="slide"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.chessModal]}>
+            <Text style={[styles.modalTitle, styles.chessText]}>
+              Leaderboard
+            </Text>
+            <ScrollView style={styles.leaderboardList}>
+              {leaderboard.map((entry, index) => (
+                <View key={index} style={styles.leaderboardEntry}>
+                  <Text style={[styles.leaderboardText, styles.chessText]}>
+                    {entry.winner} defeated {entry.loser} by {entry.winType}
+                  </Text>
+                  <Text style={[styles.leaderboardDate, styles.chessText]}>
+                    {new Date(entry.date).toLocaleDateString()}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.chessButton]}
+              onPress={() => setShowLeaderboardModal(false)}
+            >
+              <Text style={styles.modalButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1354,10 +1544,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
+    flex: 1,
   },
   board: {
     aspectRatio: 1,
-    width: '95%',
+    width: '100%',
+    maxWidth: 500,
     backgroundColor: '#8B4513',
     borderRadius: 12,
     padding: 10,
@@ -1420,7 +1612,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   piece: {
-    fontSize: 35,
+    fontSize: 45,
     fontWeight: 'bold',
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 1, height: 1 },
@@ -1497,10 +1689,22 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 20,
   },
+  modalText: {
+    fontSize: 18,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
   modalButtonsContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 10,
+  },
+  modalButton: {
+    backgroundColor: '#3498db',
+    padding: 15,
+    borderRadius: 10,
+    minWidth: 100,
+    alignItems: 'center',
   },
   modalButtonText: {
     color: 'white',
@@ -1790,39 +1994,6 @@ const styles = StyleSheet.create({
     textShadowRadius: 6,
     fontSize: 40,
   },
-  victoryModal: {
-    backgroundColor: '#2c3e50',
-    padding: 30,
-    borderRadius: 20,
-    width: '90%',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#f1c40f',
-  },
-  victoryTitle: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  victorySubtitle: {
-    fontSize: 20,
-    marginBottom: 15,
-    color: '#f1c40f',
-  },
-  victoryPlayer: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 25,
-    color: '#3498db',
-  },
-  victoryButton: {
-    backgroundColor: '#2ecc71',
-    marginBottom: 10,
-  },
-  exitButton: {
-    backgroundColor: '#e74c3c',
-  },
   tallyContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1833,5 +2004,34 @@ const styles = StyleSheet.create({
   tallyText: {
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  leaderboardButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#3498db',
+  },
+  leaderboardButtonText: {
+    fontSize: 24,
+  },
+  leaderboardList: {
+    width: '100%',
+    maxHeight: 300,
+  },
+  leaderboardEntry: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#34495e',
+  },
+  leaderboardText: {
+    fontSize: 16,
+    marginBottom: 5,
+  },
+  leaderboardDate: {
+    fontSize: 12,
+    color: '#bdc3c7',
   },
 }); 
